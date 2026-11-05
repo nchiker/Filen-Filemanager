@@ -74,6 +74,36 @@ were left in the user's Filen account: "Filen Files test (safe to delete)" (stil
   Not exercised: the "Couldn't upload" failure card (Retry/Dismiss) — needs a non-network failure.
 - Image viewer decodes at view size via Coil; PDF page bitmaps are height-capped (6000 px).
 
+## Documents provider (other apps can browse Filen)
+- `docs/FilenDocumentsProvider.kt`, authority `app.filenfiles.documents`, exported behind `MANAGE_DOCUMENTS` (only the
+  system picker/Files app can bind it; apps get per-URI grants). Runs in-process on the existing `StorageRouter`/session
+  — no second native library was needed (the plan to package Filen's `filen-mobile-native-cache` was dropped).
+- Roots: `filen` ("Filen Drive": browse/open/thumbnail/search/create folder/create new files/rename/move/delete→Filen
+  trash) and `filen-in` ("Filen – Shared with me": read-only). Outgoing shares (`filen-out`) and local storage are NOT
+  exposed. Document ids are our `ItemId` strings; no roots are listed when signed out, and an expired/signed-out session
+  raises `AuthenticationRequiredException` (opens the app).
+- Providers are created BEFORE `Application.onCreate`, so the provider only touches `FilesApp` lazily and waits up to
+  10 s for the background session restore.
+- Writes: `createDocument` for a file returns a virtual `filen-pending:<n>` id + temp file under `cache/upload/doc-*`;
+  when the writer closes cleanly the file is handed to `TransferManager.enqueueFile` (same queue/panel/retry as the UI;
+  the temp file is deleted on DONE/cancel/dismiss, kept for Retry on failure). **Existing files are read-only**: we have
+  no verified overwrite-in-place on Filen (same-name upload behaviour unknown), so `FLAG_SUPPORTS_WRITE` is only set on
+  pending docs.
+- Reads call `materialize()` (full download into `cache/open`) before returning the fd — big files block until fully
+  downloaded; `CancellationSignal` cancels the coroutine. `isChildDocument` uses a parent map learned from listings,
+  falling back to a folder's breadcrumb trail. Nested received-share folders still can't be resolved cold after process
+  death (SDK registry is in memory) → FileNotFound until the user reopens them in the app.
+- Child listings call `setNotificationUri`; the app calls `docsChanged(folder)` after uploads and the roots URI on
+  sign-in/out. UI-initiated rename/move/delete in the app don't push document-change notifications (pull to refresh).
+
+- Device-tested via the system Files app (browse, open, thumbnails, search, create folder, copy in/out with matching
+  md5, rename, move, delete→trash, read-only shared root, picker). Findings fixed: cold-start race (provider ran before
+  `Application.onCreate` finished → now `FilesApp.awaitReady()`), and the Filen search-index crawl (~190% CPU for 1-2 min
+  after every process start, likely behind a ContentProvider ANR) now starts only from the UI (`MainActivity.onStart` →
+  `warmUpSearchIndex()`, 3 s delay) and on demand from search — never for a provider-only process.
+  Known: a folder created at the drive root via the picker can need a manual refresh before it shows (the SDK listing
+  can lag a just-created item, same as the trash screen); cold folder listings take 3-8 s.
+
 ## Not verified
 Writable received shares; outgoing shares (test account has none); session-expiry flow (can't invalidate the real
 account); Empty trash on a populated trash.

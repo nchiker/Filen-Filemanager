@@ -28,6 +28,16 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         <provider
+            android:name=".docs.FilenDocumentsProvider"
+            android:authorities="app.filenfiles.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"

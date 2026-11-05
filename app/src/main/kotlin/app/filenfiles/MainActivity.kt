@@ -14,4 +14,9 @@ class MainActivity : ComponentActivity() {
         val app = application as FilesApp
         setContent { FilesTheme { AppRoot(app) } }
     }
+
+    override fun onStart() {
+        super.onStart()
+        (application as FilesApp).warmUpSearchIndex()
+    }
 }

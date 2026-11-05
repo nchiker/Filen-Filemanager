@@ -42,6 +42,8 @@ class TransferManager(private val app: FilesApp) {
     data class Transfer(
         val id: Long, val name: String, val uri: Uri, val parent: ItemId, val mime: String?,
         val size: Long, val state: State = State.QUEUED, val done: Long = 0, val error: String? = null, val attempt: Int = 1,
+        /** Already-staged source (documents-provider writes): uploaded in place and deleted when finished/cancelled/dismissed. */
+        val file: File? = null,
     ) {
         val active get() = state == State.QUEUED || state == State.PREPARING || state == State.UPLOADING || state == State.WAITING_NETWORK
     }
@@ -86,11 +88,26 @@ class TransferManager(private val app: FilesApp) {
         added.forEach { queue.trySend(it.id) }
     }
 
+    /** Queues an already-local file (written by another app through the documents provider). Takes ownership of [file]. */
+    fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?): Long {
+        val t = Transfer(ids.getAndIncrement(), name, Uri.fromFile(file), parent, mime, file.length(), file = file)
+        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        startService()
+        queue.trySend(t.id)
+        return t.id
+    }
+
+    /** True while the transfer is still pending (queued, running, waiting or failed-but-retryable). */
+    fun isPending(id: Long) = find(id)?.let { it.state != State.DONE && it.state != State.CANCELLED } == true
+
+    private fun discardSource(t: Transfer?) { t?.file?.parentFile?.deleteRecursively() }
+
     fun cancel(id: Long) {
         val t = find(id) ?: return
         if (!t.active) return
         update(id) { it.copy(state = State.CANCELLED, error = null) }
         synchronized(jobs) { jobs[id] }?.cancel()
+        discardSource(t)
     }
 
     fun cancelAll() = _items.value.filter { it.active }.forEach { cancel(it.id) }
@@ -103,7 +120,10 @@ class TransferManager(private val app: FilesApp) {
         queue.trySend(id)
     }
 
-    fun dismiss(id: Long) = _items.update { l -> l.filterNot { it.id == id && !it.active } }
+    fun dismiss(id: Long) {
+        find(id)?.takeIf { !it.active }?.let(::discardSource)
+        _items.update { l -> l.filterNot { it.id == id && !it.active } }
+    }
     fun clearFinished() = _items.update { l -> l.filter { it.active } }
 
     // ---------- worker ----------
@@ -114,12 +134,14 @@ class TransferManager(private val app: FilesApp) {
         val storage = app.router.writable(t0.parent)
         if (storage == null) { fail(id, "This folder doesn't accept uploads."); return }
         val staging = File(LocalCache.dir(ctx, LocalCache.UPLOAD), "$id").apply { mkdirs() }
-        val staged = File(staging, t0.name.replace('/', '_').ifBlank { "upload" })
+        val staged = t0.file ?: File(staging, t0.name.replace('/', '_').ifBlank { "upload" })
         try {
             update(id) { it.copy(state = State.PREPARING, done = 0) }
-            // Stage a private copy: the SDK uploads from a path, and the picked Uri may stop being readable.
-            if (t0.size >= 0) LocalCache.requireSpace(ctx, t0.size)
-            ctx.contentResolver.openInputStream(t0.uri)!!.use { i -> staged.outputStream().use { o -> i.copyTo(o) } }
+            if (t0.file == null) {
+                // Stage a private copy: the SDK uploads from a path, and the picked Uri may stop being readable.
+                if (t0.size >= 0) LocalCache.requireSpace(ctx, t0.size)
+                ctx.contentResolver.openInputStream(t0.uri)!!.use { i -> staged.outputStream().use { o -> i.copyTo(o) } }
+            }
             val size = staged.length()
             update(id) { it.copy(size = size) }
 
@@ -146,13 +168,17 @@ class TransferManager(private val app: FilesApp) {
         } catch (e: Throwable) {
             fail(id, e.friendlyOrNull() ?: e.message ?: "Upload failed")
         } finally {
-            withContext(kotlinx.coroutines.NonCancellable) { staging.deleteRecursively() }
+            withContext(kotlinx.coroutines.NonCancellable) {
+                staging.deleteRecursively()
+                if (find(id)?.state == State.DONE) discardSource(t0) // failed file transfers keep their source for Retry
+            }
         }
     }
 
     private fun finishOk(id: Long) {
         update(id) { it.copy(state = State.DONE, done = it.size, error = null) }
         app.notifyChanged()
+        find(id)?.let { app.docsChanged(it.parent) }
     }
 
     private fun fail(id: Long, msg: String) = update(id) { it.copy(state = State.FAILED, error = msg) }
