@@ -151,7 +151,7 @@ fun HomeScreen(env: AppEnv) {
     val signedIn = rememberSignedIn(env)
     val hasFiles = rememberHasAllFiles(env)
     val roots = loadState(signedIn, hasFiles) { env.app.router.roots() }
-    val recents = loadState(signedIn, hasFiles) { env.app.router.recent(40) }
+    val recents = loadState(signedIn, hasFiles, env.app.changeCounter) { env.app.router.recent(40) }
     val favs = loadFavorites(env, signedIn)
     Column(Modifier.fillMaxSize()) {
         AppBar("Filen Files", actions = {
@@ -243,7 +243,7 @@ private fun FavoriteChip(item: FileItem, onClick: () -> Unit) {
 @Composable
 fun loadFavorites(env: AppEnv, signedIn: Boolean): Load<List<FileItem>> {
     val ids = env.app.prefs.favorites
-    return loadState(ids, signedIn) {
+    return loadState(ids, signedIn, env.app.changeCounter) {
         coroutineScope {
             val local = ids.map { id -> async { runCatching { env.app.router.stat(ItemId(id)) }.getOrNull() } }.awaitAll().filterNotNull()
             val server = runCatching { env.app.router.serverFavorites() }.getOrDefault(emptyList())

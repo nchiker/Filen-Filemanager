@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /** Local Android storage via java.io.File (requires All-files access to see anything but app dirs). */
-class LocalStorageProvider(private val context: Context) : StorageProvider {
+class LocalStorageProvider(private val context: Context) : StorageProvider, WritableStorage {
 
     private val internalRoot: File = Environment.getExternalStorageDirectory()
 
@@ -100,6 +100,50 @@ class LocalStorageProvider(private val context: Context) : StorageProvider {
 
     override suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit): MaterializedFile =
         MaterializedFile(File(item.id.key).absolutePath, item.name, item.mime)
+
+    // ---------- write ----------
+
+    override fun canWrite(folder: ItemId) = folder.scheme == SCHEME && File(folder.key).let { it.isDirectory && it.canWrite() }
+
+    override suspend fun createFolder(parent: ItemId, name: String): ItemId = withContext(Dispatchers.IO) {
+        val d = File(parent.key, name)
+        check(!d.exists()) { "“$name” already exists" }
+        check(d.mkdirs()) { "Could not create the folder" }
+        id(d)
+    }
+
+    /** For local storage "upload" means copy a file into the folder. */
+    override suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FileItem =
+        withContext(Dispatchers.IO) {
+            val dst = File(parent.key, name)
+            check(!dst.exists()) { "“$name” already exists" }
+            File(localPath).copyTo(dst); onProgress(dst.length()); toItem(dst)
+        }
+
+    override fun canModify(item: FileItem) = item.origin == Origin.LOCAL && File(item.id.key).let { it.exists() && it.canWrite() }
+
+    override suspend fun rename(item: FileItem, newName: String): FileItem = withContext(Dispatchers.IO) {
+        val src = File(item.id.key)
+        val dst = File(src.parentFile, newName)
+        check(!dst.exists()) { "“$newName” already exists" }
+        check(src.renameTo(dst)) { "Could not rename" }
+        toItem(dst)
+    }
+
+    override suspend fun move(item: FileItem, newParent: ItemId): FileItem = withContext(Dispatchers.IO) {
+        val src = File(item.id.key)
+        val dst = File(newParent.key, src.name)
+        check(!dst.exists()) { "“${src.name}” already exists in that folder" }
+        check(!dst.absolutePath.startsWith(src.absolutePath + "/")) { "Cannot move a folder into itself" }
+        check(src.renameTo(dst)) { "Could not move (different storage volume?)" }
+        toItem(dst)
+    }
+
+    /** Local deletion is permanent: no undo. */
+    override suspend fun trash(item: FileItem): (suspend () -> Unit)? = withContext(Dispatchers.IO) {
+        check(File(item.id.key).deleteRecursively()) { "Could not delete" }
+        null
+    }
 
     companion object {
         const val SCHEME = "local"

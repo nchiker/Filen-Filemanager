@@ -106,7 +106,7 @@ private suspend fun uploadUris(ctx: Context, target: WritableStorage, parent: It
 fun FolderContent(env: AppEnv, id: ItemId, refresh: Int, showCrumbs: Boolean = true, onTitle: (String) -> Unit = {}) {
     var retry by remember { mutableIntStateOf(0) }
     val signedIn = rememberSignedIn(env)
-    val state = loadState(id.value, refresh, retry, signedIn) { env.app.router.list(id) }
+    val state = loadState(id.value, refresh, retry, signedIn, env.app.changeCounter) { env.app.router.list(id) }
     LaunchedEffect(state) { (state as? Load.Ok)?.let { onTitle(it.value.folder.name) } }
     val prefs = env.app.prefs
     LoadHost(state, onRetry = { retry++ }) { listing ->

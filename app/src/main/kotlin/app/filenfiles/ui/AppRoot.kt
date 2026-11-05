@@ -37,7 +37,7 @@ fun folderRoute(id: ItemId) = "folder/${Uri.encode(id.value)}"
 fun viewerRoute(id: ItemId) = "viewer/${Uri.encode(id.value)}"
 
 /** Everything screens need: services plus item-level actions wired to navigation. */
-class AppEnv(val app: FilesApp, val nav: NavHostController, val actions: ItemActions)
+class AppEnv(val app: FilesApp, val nav: NavHostController, val actions: ItemActions, val snackbar: SnackbarHostState)
 
 @Composable
 fun AppRoot(app: FilesApp) {
@@ -45,6 +45,9 @@ fun AppRoot(app: FilesApp) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val session by app.session.state.collectAsState()
+
+    val snackbar = remember { SnackbarHostState() }
+    var op by remember { mutableStateOf<Op?>(null) }
 
     val actions = remember(app, nav) {
         fun withFile(item: FileItem, then: (MaterializedFile) -> Unit) {
@@ -63,9 +66,13 @@ fun AppRoot(app: FilesApp) {
             share = { withFile(it) { f -> OpenWith.share(ctx, f) } },
             toggleFavorite = { app.prefs.toggleFavorite(it.id) },
             isFavorite = { app.prefs.isFavorite(it.id) },
+            canModify = { app.router.modifier(it) != null },
+            rename = { op = Op.Rename(it) },
+            move = { op = Op.Move(it) },
+            delete = { op = Op.Delete(it) },
         )
     }
-    val env = remember(app, nav, actions) { AppEnv(app, nav, actions) }
+    val env = remember(app, nav, actions) { AppEnv(app, nav, actions, snackbar) }
 
     val backEntry by nav.currentBackStackEntryAsState()
     val route = backEntry?.destination?.route
@@ -78,6 +85,7 @@ fun AppRoot(app: FilesApp) {
     val start = if (session == FilenSession.State.LoggedOut && !app.prefs.skippedLogin) "login" else "home"
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (showBar) NavigationBar {
                 tabs.forEach { t ->
@@ -109,5 +117,6 @@ fun AppRoot(app: FilesApp) {
                 ViewerScreen(env, ItemId(it.arguments!!.getString("id")!!))
             }
         }
+        OperationHost(env, op) { op = null }
     }
 }

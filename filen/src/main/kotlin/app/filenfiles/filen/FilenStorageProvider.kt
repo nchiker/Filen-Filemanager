@@ -12,7 +12,10 @@ import uniffi.filen_sdk_rs.AnyDirWithContext
 import uniffi.filen_sdk_rs.AnyFile
 import uniffi.filen_sdk_rs.AnyNormalDir
 import uniffi.filen_sdk_rs.AnySharedDir
+import uniffi.filen_sdk_rs.CreatedTime
 import uniffi.filen_sdk_rs.Dir
+import uniffi.filen_sdk_rs.DirectoryMetaChanges
+import uniffi.filen_sdk_rs.FileMetaChanges
 import uniffi.filen_sdk_rs.DirMeta
 import uniffi.filen_sdk_rs.FileMeta
 import uniffi.filen_sdk_rs.FileBuilderParamsOptionalName
@@ -46,6 +49,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     private val dirCache = ConcurrentHashMap<String, DirEntry>()
     private val personalFiles = ConcurrentHashMap<String, FFile>()
+    private val personalDirObjs = ConcurrentHashMap<String, Dir>()
     private val sharedDirs = ConcurrentHashMap<String, SharedDirNode>()   // key = full ItemId value
     private val sharedFiles = ConcurrentHashMap<String, SharedFileNode>() // key = full ItemId value
 
@@ -84,6 +88,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private fun personalDirItem(d: Dir): FileItem {
         val name = dirName(d.meta)
         dirCache[d.uuid] = DirEntry(name, (d.parent as? ParentUuid.Uuid)?.v1)
+        personalDirObjs[d.uuid] = d
         return FileItem(ItemId("$P:${d.uuid}"), name, true, 0, d.timestamp, null, Origin.FILEN_PERSONAL)
     }
 
@@ -339,6 +344,42 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             indexedAt.set(0)
             personalFileItem(f)
         }
+
+    private suspend fun fileObj(id: ItemId) = personalFiles[id.key] ?: client.getFile(id.key)
+    private suspend fun dirObj(id: ItemId) = personalDirObjs[id.key] ?: client.getDir(id.key)
+    private fun invalidate() = indexedAt.set(0)
+
+    override fun canModify(item: FileItem) = item.origin == Origin.FILEN_PERSONAL && item.id.scheme == P && item.id.key != ROOT
+
+    override suspend fun rename(item: FileItem, newName: String): FileItem = withContext(Dispatchers.IO) {
+        require(canModify(item)) { "This item cannot be renamed" }
+        val out = if (item.isDirectory)
+            personalDirItem(client.updateDirMetadata(dirObj(item.id), DirectoryMetaChanges(name = newName, created = CreatedTime.Keep)))
+        else
+            personalFileItem(client.updateFileMetadata(fileObj(item.id), FileMetaChanges(name = newName, created = CreatedTime.Keep)))
+        invalidate(); out
+    }
+
+    override suspend fun move(item: FileItem, newParent: ItemId): FileItem = withContext(Dispatchers.IO) {
+        require(canModify(item)) { "This item cannot be moved" }
+        val parent = personalDir(newParent)
+        val out = if (item.isDirectory) personalDirItem(client.moveDir(dirObj(item.id), parent))
+        else personalFileItem(client.moveFile(fileObj(item.id), parent))
+        invalidate(); out
+    }
+
+    override suspend fun trash(item: FileItem): (suspend () -> Unit)? = withContext(Dispatchers.IO) {
+        require(canModify(item)) { "This item cannot be deleted" }
+        val undo: suspend () -> Unit = if (item.isDirectory) {
+            val t = client.trashDir(dirObj(item.id))
+            ({ withContext(Dispatchers.IO) { personalDirItem(client.restoreDir(t)); invalidate() } })
+        } else {
+            val t = client.trashFile(fileObj(item.id))
+            ({ withContext(Dispatchers.IO) { personalFileItem(client.restoreFile(t)); invalidate() } })
+        }
+        invalidate()
+        undo
+    }
 
     // ---------- download ----------
 

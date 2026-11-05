@@ -5,6 +5,9 @@ import app.filenfiles.core.StorageRouter
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.FilenStorageProvider
 import app.filenfiles.local.LocalStorageProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +19,10 @@ class FilesApp : Application() {
     lateinit var session: FilenSession; private set
     lateinit var local: LocalStorageProvider; private set
     lateinit var router: StorageRouter; private set
+    /** Bumped after any rename/move/delete so visible lists reload. */
+    var changeCounter by mutableIntStateOf(0); private set
+    fun notifyChanged() { changeCounter++ }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     lateinit var prefs: Prefs; private set
 

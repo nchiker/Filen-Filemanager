@@ -77,8 +77,9 @@ so local folders are browsable.
   upload/new-folder visibility rules (offered in personal folders only, never in received shares). **Not verified:**
   writable received shares and outgoing shares (the test account had none); the upload picker flow itself (uploads were
   seeded through the debug hook below).
-- **Limited writes.** You can create folders and upload files (system picker) into your *personal* Filen drive; received
-  shares are never written to. No rename, move, delete or trash yet (the SDK supports all of it).
+- **Writes are limited to your own storage.** Create folder, upload (system picker), rename, move, and delete work in your
+  personal Filen drive (delete = Filen trash, with Undo) and on local storage (delete is permanent, with confirmation).
+  Received shares are never written to. There is no trash screen yet to browse/restore/empty Filen's trash.
 - **Favorites** are stored on the device; toggling them does not write Filen's server-side favorite flag
   (server favorites are shown, read-only).
 - **Search** over Filen is a client-side index of names (the SDK exposes no server search). It is built in the

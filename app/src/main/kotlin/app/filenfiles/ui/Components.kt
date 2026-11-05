@@ -146,6 +146,10 @@ class ItemActions(
     val share: (FileItem) -> Unit,
     val toggleFavorite: (FileItem) -> Unit,
     val isFavorite: (FileItem) -> Boolean,
+    val canModify: (FileItem) -> Boolean = { false },
+    val rename: (FileItem) -> Unit = {},
+    val move: (FileItem) -> Unit = {},
+    val delete: (FileItem) -> Unit = {},
 )
 
 @Composable
@@ -162,6 +166,13 @@ fun ItemMenu(item: FileItem, actions: ItemActions) {
             }
             val fav = actions.isFavorite(item)
             DropdownMenuItem({ Text(if (fav) "Remove from favorites" else "Add to favorites") }, { open = false; actions.toggleFavorite(item) })
+            if (actions.canModify(item)) {
+                HorizontalDivider()
+                DropdownMenuItem({ Text("Rename…") }, { open = false; actions.rename(item) })
+                DropdownMenuItem({ Text("Move to…") }, { open = false; actions.move(item) })
+                DropdownMenuItem({ Text(if (item.origin == Origin.LOCAL) "Delete…" else "Move to trash") }, { open = false; actions.delete(item) })
+                HorizontalDivider()
+            }
             DropdownMenuItem({ Text("Details") }, { open = false; details = true })
         }
     }
