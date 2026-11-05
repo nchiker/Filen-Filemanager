@@ -73,10 +73,12 @@ so local folders are browsable.
 ## Limitations / not done yet
 
 - Verified on a Pixel 4a (Android 13) with a real account: sign-in and session restore, Filen Drive and received-share
-  browsing, badges, favorites, search, local storage, image/PDF viewers. **Not verified:** downloading/opening a Filen
-  file in the built-in viewers (the test pass avoided opening personal files), read-only vs writable shares, and
-  outgoing shares (the test account had none).
-- **Read-only.** No upload, rename, move, delete, new folder or trash yet (the SDK supports all of it).
+  browsing, badges, favorites, search, local storage, Filen download+decrypt into the image/PDF viewers and Open With,
+  upload/new-folder visibility rules (offered in personal folders only, never in received shares). **Not verified:**
+  writable received shares and outgoing shares (the test account had none); the upload picker flow itself (uploads were
+  seeded through the debug hook below).
+- **Limited writes.** You can create folders and upload files (system picker) into your *personal* Filen drive; received
+  shares are never written to. No rename, move, delete or trash yet (the SDK supports all of it).
 - **Favorites** are stored on the device; toggling them does not write Filen's server-side favorite flag
   (server favorites are shown, read-only).
 - **Search** over Filen is a client-side index of names (the SDK exposes no server search). It is built in the
@@ -95,3 +97,14 @@ so local folders are browsable.
 - **arm64-v8a only** by default (36 MB native library). The release build type is debug-signed.
 - Uses `MANAGE_EXTERNAL_STORAGE`, which Google Play restricts to file managers via a declaration form.
 - Local search walks the filesystem (bounded to 60k entries), not MediaStore.
+
+## Testing on a device
+
+Debug builds include `DebugUploadReceiver`, a seeding hook that only the adb shell can call (it requires the `DUMP`
+permission and is not in release builds). It creates a folder in the Filen drive root and uploads a local directory into it:
+
+```bash
+adb push seed /sdcard/Download/filen-seed
+adb shell "am broadcast -n app.filenfiles/.debug.DebugUploadReceiver --es dir /sdcard/Download/filen-seed --es folder 'My test folder'"
+adb logcat -s FilenDebug:V      # progress and DONE/FAILED
+```

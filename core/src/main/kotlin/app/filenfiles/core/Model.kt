@@ -73,8 +73,19 @@ interface StorageProvider {
     fun owns(id: ItemId): Boolean
 }
 
+/** Implemented by providers that can create folders and accept uploads. */
+interface WritableStorage {
+    /** True when [folder] accepts new content (personal drive folders; never received shares). */
+    fun canWrite(folder: ItemId): Boolean
+    suspend fun createFolder(parent: ItemId, name: String): ItemId
+    suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit = {}): FileItem
+}
+
 /** Combines providers, routing by [ItemId.scheme]. */
 class StorageRouter(private val providers: List<StorageProvider>) {
+    fun writable(id: ItemId): WritableStorage? =
+        providers.firstOrNull { it.owns(id) } as? WritableStorage
+
     fun provider(id: ItemId): StorageProvider =
         providers.firstOrNull { it.owns(id) } ?: error("No provider for ${id.value}")
 

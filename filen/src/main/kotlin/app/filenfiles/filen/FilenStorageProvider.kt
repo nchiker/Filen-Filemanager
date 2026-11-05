@@ -15,7 +15,9 @@ import uniffi.filen_sdk_rs.AnySharedDir
 import uniffi.filen_sdk_rs.Dir
 import uniffi.filen_sdk_rs.DirMeta
 import uniffi.filen_sdk_rs.FileMeta
+import uniffi.filen_sdk_rs.FileBuilderParamsOptionalName
 import uniffi.filen_sdk_rs.JsFileDownloadCallback
+import uniffi.filen_sdk_rs.JsFileUploadCallback
 import uniffi.filen_sdk_rs.ManagedFuture
 import uniffi.filen_sdk_rs.NonRootDir
 import uniffi.filen_sdk_rs.SharingRole
@@ -30,7 +32,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -309,6 +311,34 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         indexedAt.set(System.currentTimeMillis())
         android.util.Log.d("FilenPerf", "index built: ${personal.size} personal + ${acc.size} shared")
     }
+
+    // ---------- write (personal drive only: received shares are never written to) ----------
+
+    override fun canWrite(folder: ItemId) = folder.scheme == P
+
+    private suspend fun personalDir(id: ItemId): AnyNormalDir {
+        require(id.scheme == P) { "Uploads are only supported into your personal Filen drive" }
+        val root = rootUuid
+        return if (id.key == ROOT || id.key == root) AnyNormalDir.Root(client.root()) else AnyNormalDir.Dir(client.getDir(id.key))
+    }
+
+    override suspend fun createFolder(parent: ItemId, name: String): ItemId = withContext(Dispatchers.IO) {
+        val d = client.createDir(personalDir(parent), name)
+        personalDirItem(d).id.also { indexedAt.set(0) } // invalidate the search index
+    }
+
+    override suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FileItem =
+        withContext(Dispatchers.IO) {
+            var sent = 0L
+            val cb = object : JsFileUploadCallback {
+                // `uploadedBytes` is a delta since the previous call
+                override fun onUpdate(uploadedBytes: ULong) { sent += uploadedBytes.toLong(); onProgress(sent) }
+            }
+            val params = FileBuilderParamsOptionalName(personalDir(parent), name, null, null, mime)
+            val f = client.uploadFile(params, localPath, cb, ManagedFuture(null, null))
+            indexedAt.set(0)
+            personalFileItem(f)
+        }
 
     // ---------- download ----------
 

@@ -1,6 +1,19 @@
 package app.filenfiles.ui
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalContext
+import app.filenfiles.core.WritableStorage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -22,14 +35,71 @@ import app.filenfiles.core.ItemId
 fun FolderScreen(env: AppEnv, id: ItemId) {
     var title by remember { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val writable = env.app.router.writable(id)?.takeIf { it.canWrite(id) }
+    var newFolder by remember { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty() && writable != null) scope.launch {
+            Toast.makeText(ctx, "Uploading ${uris.size} file(s)…", Toast.LENGTH_SHORT).show()
+            val failed = uploadUris(ctx, writable, id, uris)
+            Toast.makeText(ctx, if (failed == null) "Upload complete" else "Upload failed: $failed", Toast.LENGTH_LONG).show()
+            refresh++
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         AppBar(title, onBack = { env.nav.popBackStack() }, actions = {
+            if (writable != null) {
+                IconButton({ newFolder = true }) { Icon(Icons.Filled.CreateNewFolder, "New folder") }
+                IconButton({ picker.launch(arrayOf("*/*")) }) { Icon(Icons.Filled.Upload, "Upload files") }
+            }
             IconButton({ refresh++ }) { Icon(Icons.Filled.Refresh, "Refresh") }
             IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
         })
         FolderContent(env, id, refresh, onTitle = { title = it })
     }
+    if (newFolder && writable != null) NewFolderDialog(
+        onDismiss = { newFolder = false },
+        onCreate = { name ->
+            newFolder = false
+            scope.launch {
+                try { writable.createFolder(id, name); refresh++ }
+                catch (e: CancellationException) { throw e }
+                catch (e: Throwable) { Toast.makeText(ctx, e.friendly(), Toast.LENGTH_LONG).show() }
+            }
+        },
+    )
 }
+
+@Composable
+private fun NewFolderDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New folder") },
+        text = { OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }) },
+        confirmButton = { TextButton({ onCreate(name.trim()) }, enabled = name.isNotBlank()) { Text("Create") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Copies each picked document to the cache and uploads it; returns null on success or an error message. */
+private suspend fun uploadUris(ctx: Context, target: WritableStorage, parent: ItemId, uris: List<Uri>): String? =
+    withContext(Dispatchers.IO) {
+        try {
+            for (uri in uris) {
+                var name = "upload"
+                ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                    if (it.moveToFirst()) name = it.getString(0)
+                }
+                val tmp = File(ctx.cacheDir, "upload/${System.nanoTime()}/$name").apply { parentFile!!.mkdirs() }
+                ctx.contentResolver.openInputStream(uri)!!.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+                try { target.upload(parent, tmp.absolutePath, name, ctx.contentResolver.getType(uri)) }
+                finally { tmp.parentFile?.deleteRecursively() }
+            }
+            null
+        } catch (e: CancellationException) { throw e } catch (e: Throwable) { e.friendly() }
+    }
 
 /** Breadcrumbs + sort/view controls + the listing itself. Used by folder screens and the Shared tab. */
 @Composable

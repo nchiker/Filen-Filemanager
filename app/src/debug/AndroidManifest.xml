@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only. Requires the DUMP permission, which only the adb shell holds, so other apps cannot call it. -->
+        <receiver
+            android:name="app.filenfiles.debug.DebugUploadReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>
