@@ -81,7 +81,7 @@ class TransferManager(private val app: FilesApp) {
             }
             Transfer(ids.getAndIncrement(), name, uri, parent, ctx.contentResolver.getType(uri), size)
         }
-        _items.update { l -> l.filter { it.state != State.DONE } + added } // new batch: forget completed ones
+        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + added } // new batch: forget completed/cancelled ones
         startService()
         added.forEach { queue.trySend(it.id) }
     }
