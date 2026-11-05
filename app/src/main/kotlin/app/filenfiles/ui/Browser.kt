@@ -1,0 +1,104 @@
+package app.filenfiles.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import app.filenfiles.SortKey
+import app.filenfiles.core.Crumb
+import app.filenfiles.core.ItemId
+
+@Composable
+fun FolderScreen(env: AppEnv, id: ItemId) {
+    var title by remember { mutableStateOf("") }
+    var refresh by remember { mutableIntStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        AppBar(title, onBack = { env.nav.popBackStack() }, actions = {
+            IconButton({ refresh++ }) { Icon(Icons.Filled.Refresh, "Refresh") }
+            IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
+        })
+        FolderContent(env, id, refresh, onTitle = { title = it })
+    }
+}
+
+/** Breadcrumbs + sort/view controls + the listing itself. Used by folder screens and the Shared tab. */
+@Composable
+fun FolderContent(env: AppEnv, id: ItemId, refresh: Int, showCrumbs: Boolean = true, onTitle: (String) -> Unit = {}) {
+    var retry by remember { mutableIntStateOf(0) }
+    val signedIn = rememberSignedIn(env)
+    val state = loadState(id.value, refresh, retry, signedIn) { env.app.router.list(id) }
+    LaunchedEffect(state) { (state as? Load.Ok)?.let { onTitle(it.value.folder.name) } }
+    val prefs = env.app.prefs
+    LoadHost(state, onRetry = { retry++ }) { listing ->
+        Column(Modifier.fillMaxSize()) {
+            if (showCrumbs) Breadcrumbs(listing.trail) { c ->
+                if (c.id == id) return@Breadcrumbs
+                val isSharedRoot = c.id.key == "root" && c.id.scheme != "filen"
+                when {
+                    // Roots of the shared namespaces live in the Shared tab, not on a folder route.
+                    isSharedRoot -> if (!env.nav.popBackStack("shared", false)) env.nav.navigate("shared")
+                    // Prefer unwinding to the crumb if it is already on the back stack (keeps system Back sane).
+                    env.nav.popBackStack(folderRoute(c.id), false) -> Unit
+                    else -> env.nav.navigate(folderRoute(c.id))
+                }
+            }
+            ViewControls(env)
+            if (listing.items.isEmpty()) EmptyState(when (id.value) {
+                "filen-in:root" -> "Nothing has been shared with you yet"
+                "filen-out:root" -> "You haven't shared anything yet"
+                else -> "This folder is empty"
+            })
+            else FileCollection(prefs.sort(listing.items), prefs.grid, env.actions, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun Breadcrumbs(trail: List<Crumb>, onClick: (Crumb) -> Unit) {
+    LazyRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        itemsIndexed(trail) { i, c ->
+            if (i > 0) Icon(Icons.Filled.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            val last = i == trail.lastIndex
+            TextButton({ onClick(c) }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Text(c.name, fontWeight = if (last) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewControls(env: AppEnv) {
+    val prefs = env.app.prefs
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            TextButton({ menu = true }) {
+                Icon(Icons.AutoMirrored.Filled.Sort, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                Text("${prefs.sortKey.name.lowercase().replaceFirstChar { it.uppercase() }} ${if (prefs.ascending) "↑" else "↓"}")
+            }
+            DropdownMenu(menu, { menu = false }) {
+                SortKey.entries.forEach { k ->
+                    DropdownMenuItem(
+                        { Text(k.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                        { prefs.updateSort(k, if (prefs.sortKey == k) !prefs.ascending else true); menu = false },
+                        trailingIcon = { if (prefs.sortKey == k) Icon(Icons.Filled.Check, null) },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        IconButton({ prefs.updateGrid(!prefs.grid) }) {
+            if (prefs.grid) Icon(Icons.AutoMirrored.Filled.ViewList, "List view") else Icon(Icons.Filled.GridView, "Grid view")
+        }
+    }
+}
