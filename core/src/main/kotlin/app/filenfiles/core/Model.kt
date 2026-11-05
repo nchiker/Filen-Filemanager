@@ -70,6 +70,12 @@ interface StorageProvider {
     /** Make the file readable locally (downloading+decrypting into cache if needed). */
     suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit = { _, _ -> }): MaterializedFile
 
+    /**
+     * Path of a small cached WebP/JPEG thumbnail for an image [item], or null when this provider has none
+     * (the UI then loads the file directly for local items, or shows the type icon).
+     */
+    suspend fun thumbnail(item: FileItem, sizePx: Int): String? = null
+
     fun owns(id: ItemId): Boolean
 }
 
@@ -110,6 +116,8 @@ class StorageRouter(private val providers: List<StorageProvider>) {
         providers.flatMap { runCatching { it.favorites() }.getOrDefault(emptyList()) }
     suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit = { _, _ -> }) =
         provider(item.id).materialize(item, onProgress)
+
+    suspend fun thumbnail(item: FileItem, sizePx: Int): String? = provider(item.id).thumbnail(item, sizePx)
 
     suspend fun search(query: String): List<FileItem> =
         providers.flatMap { runCatching { it.search(query) }.getOrDefault(emptyList()) }

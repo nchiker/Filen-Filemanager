@@ -3,6 +3,7 @@ package app.filenfiles.ui
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -206,6 +208,37 @@ fun DetailsDialog(item: FileItem, onDismiss: () -> Unit) {
     )
 }
 
+// ---------- thumbnails ----------
+
+/**
+ * Type icon, replaced by an image thumbnail for image files once one is available
+ * (local files are decoded by Coil at thumbnail size; Filen files use the SDK's thumbnailer).
+ */
+@Composable
+fun ItemThumb(item: FileItem, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+    val icon = @Composable { Icon(iconFor(item), null, tint = iconTint(item), modifier = Modifier.size(size * 0.66f)) }
+    if (item.isDirectory || item.mime?.startsWith("image/") != true) {
+        Box(modifier.size(size), contentAlignment = Alignment.Center) { icon() }; return
+    }
+    val ctx = LocalContext.current
+    val px = with(androidx.compose.ui.platform.LocalDensity.current) { size.roundToPx() }
+    val model by produceState<Any?>(null, item.id, item.size, px) {
+        value = if (item.origin == Origin.LOCAL) java.io.File(item.id.key)
+        else (ctx.applicationContext as app.filenfiles.FilesApp).router
+            .let { r -> runCatching { r.thumbnail(item, maxOf(px, 128).coerceAtMost(512)) }.getOrNull() }
+            ?.let { java.io.File(it) }
+    }
+    Box(modifier.size(size).clip(RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
+        val m = model
+        if (m == null) icon() else coil3.compose.SubcomposeAsyncImage(
+            model = coil3.request.ImageRequest.Builder(ctx).data(m).size(px).build(),
+            contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+            loading = { icon() }, error = { icon() },
+        )
+    }
+}
+
 // ---------- lists ----------
 
 @Composable
@@ -213,7 +246,7 @@ fun FileRow(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
     val ctx = LocalContext.current
     ListItem(
         modifier = Modifier.clickable { actions.open(item) },
-        leadingContent = { Icon(iconFor(item), null, tint = iconTint(item), modifier = Modifier.size(32.dp)) },
+        leadingContent = { ItemThumb(item, 44.dp) },
         headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Column {
@@ -236,10 +269,14 @@ fun FileGridCell(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
     Card(Modifier.fillMaxWidth().clickable { actions.open(item) }) {
         Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.fillMaxWidth()) {
-                Icon(iconFor(item), null, tint = iconTint(item), modifier = Modifier.size(48.dp).align(Alignment.Center))
-                Box(Modifier.align(Alignment.TopEnd)) { ItemMenu(item, actions) }
+                ItemThumb(item, 96.dp, Modifier.align(Alignment.Center))
+                Box(
+                    Modifier.align(Alignment.TopEnd).clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
+                ) { ItemMenu(item, actions) }
                 if (actions.isFavorite(item)) Icon(Icons.Filled.Star, null, tint = Color(0xFFF9AB00), modifier = Modifier.size(16.dp).align(Alignment.TopStart))
             }
+            Spacer(Modifier.height(6.dp))
             Text(item.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             OriginBadge(item, mixed)
         }

@@ -21,6 +21,8 @@ import uniffi.filen_sdk_rs.FileMeta
 import uniffi.filen_sdk_rs.FileBuilderParamsOptionalName
 import uniffi.filen_sdk_rs.JsFileDownloadCallback
 import uniffi.filen_sdk_rs.JsFileUploadCallback
+import uniffi.filen_sdk_rs.MakeThumbnailInMemoryParams
+import uniffi.filen_sdk_rs.MakeThumbnailInMemoryResult
 import uniffi.filen_sdk_rs.ManagedFuture
 import uniffi.filen_sdk_rs.NonRootDir
 import uniffi.filen_sdk_rs.SharingRole
@@ -409,6 +411,24 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             check(tmp.renameTo(target)) { "Could not finalise download" }
             MaterializedFile(target.absolutePath, item.name, item.mime)
         }
+
+    /** SDK-made WebP thumbnail, cached on disk per file+size. Null for non-images or when the SDK can't make one. */
+    override suspend fun thumbnail(item: FileItem, sizePx: Int): String? = withContext(Dispatchers.IO) {
+        if (item.isDirectory || item.mime?.startsWith("image/") != true) return@withContext null
+        val target = JFile(context.cacheDir, "thumbs/${item.id.scheme}/${item.id.key.replace('/', '_')}-${item.size}-$sizePx.webp")
+        if (target.isFile && target.length() > 0) return@withContext target.absolutePath
+        val any: AnyFile = if (item.id.scheme == P) {
+            AnyFile.File(personalFiles[item.id.key] ?: client.getFile(item.id.key))
+        } else {
+            (sharedFiles[item.id.value] ?: run { stat(item.id); sharedFiles[item.id.value] })?.any ?: return@withContext null
+        }
+        val res = client.makeThumbnailInMemory(MakeThumbnailInMemoryParams(any, sizePx.toUInt(), sizePx.toUInt(), 80u))
+        if (res !is MakeThumbnailInMemoryResult.Thumbnail) return@withContext null
+        target.parentFile?.mkdirs()
+        val tmp = JFile(target.parentFile, target.name + ".part")
+        tmp.writeBytes(res.thumbnail.webpData)
+        if (tmp.renameTo(target)) target.absolutePath else null
+    }
 
     companion object {
         const val P = "filen"

@@ -53,7 +53,12 @@ Writable received shares; outgoing shares (test account has none); the upload fi
 ## Roadmap (in order)
 1. ~~Rename / move / delete~~ — DONE (Operations.kt, `WritableStorage` in :core; Filen trash has Undo, local delete is
    permanent with confirmation; received shares read-only). Device-tested.
-2. Image thumbnails in lists/grids (SDK has `makeThumbnail*`; Coil for local).
+2. ~~Image thumbnails in lists/grids~~ — DONE. `StorageProvider.thumbnail()` (default null); Filen uses SDK
+   `makeThumbnailInMemory` (WebP, cached in `cacheDir/thumbs/<scheme>/<id>-<size>-<px>.webp`); local images are decoded by
+   Coil at thumbnail size. UI: `ItemThumb` in Components.kt (list 44dp, grid 96dp; falls back to type icon).
+   Device-tested (Filen + local, list + grid, no errors). Debug build showed ~30-38% janky frames while fast-scrolling a
+   big Camera folder (UI thread; debug exaggerates) — re-check on a release build; if still bad, add a size-bounded
+   thumbnail request queue / `remember` the resolved path per item.
 3. Android DocumentsProvider so other apps can browse Filen. Filen's reference
    (`external/filen-android-documents-provider`, in `filen-android-documents-provider`) uses a *different* native lib
    (`filen-mobile-native-cache`, personal drive only, own TLS init class `FilenProviderTls`) → needs separate
