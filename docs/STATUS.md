@@ -117,7 +117,7 @@ account); Empty trash on a populated trash.
    Device-tested (Filen + local, list + grid, no errors). Debug build showed ~30-38% janky frames while fast-scrolling a
    big Camera folder (UI thread; debug exaggerates) — re-check on a release build; if still bad, add a size-bounded
    thumbnail request queue / `remember` the resolved path per item.
-3. Android DocumentsProvider so other apps can browse Filen. Filen's reference
+3. ~~Android DocumentsProvider~~ — DONE, see the "Documents provider" section. (Original notes:) Filen's reference
    (`external/filen-android-documents-provider`, in `filen-android-documents-provider`) uses a *different* native lib
    (`filen-mobile-native-cache`, personal drive only, own TLS init class `FilenProviderTls`) → needs separate
    packaging or a provider written against `filen-sdk-rs`.
@@ -125,4 +125,8 @@ account); Empty trash on a populated trash.
    Files > Filen; restore / delete forever / empty with confirmations). The server's trash listing lags behind
    restore/delete, so handled rows are hidden locally. Empty-trash confirm was deliberately NOT exercised on the real
    account. Remaining: server-side favorites write-back (`setFavorite`), outgoing-share management. Deferred (not needed): x86_64 build for emulators.
-5. Known UX nits: storage shortcut row cut at right edge on Home; large shared folders take 3–12 s (SDK time).
+5. Search-index crawl: ~3.3 CPU-minutes (8 cores saturated for ~40 s) once per app start with the UI open — battery
+   heavy. Ideas: persist the index on disk and refresh incrementally, lower SDK concurrency, only crawl on Wi-Fi/charging.
+6. Known UX nits: storage shortcut row cut at right edge on Home; large shared folders take 3–12 s (SDK time).
+
+_Provider recheck: cold provider-only start = 0% CPU after the listing; UI start = one ~40 s index burst then idle; search OK._
