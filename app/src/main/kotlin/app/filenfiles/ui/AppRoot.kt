@@ -77,16 +77,25 @@ fun AppRoot(app: FilesApp) {
     val backEntry by nav.currentBackStackEntryAsState()
     val route = backEntry?.destination?.route
     val showBar = route in tabs.map { it.route }
+    // An Undo snackbar belongs to the screen it was raised on.
+    LaunchedEffect(route) { snackbar.currentSnackbarData?.dismiss() }
 
     if (session == FilenSession.State.Unknown) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
         return
     }
+    // A rejected session (revoked/changed password) can't be retried away: go to sign-in.
+    LaunchedEffect(session) {
+        if (session is FilenSession.State.Expired && nav.currentDestination?.route != "login") {
+            nav.navigate("login") { launchSingleTop = true }
+        }
+    }
     val start = if (session == FilenSession.State.LoggedOut && !app.prefs.skippedLogin) "login" else "home"
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
+        bottomBar = { Column {
+            TransfersPanel(env, padForNavBar = !showBar)
             if (showBar) NavigationBar {
                 tabs.forEach { t ->
                     NavigationBarItem(
@@ -101,7 +110,7 @@ fun AppRoot(app: FilesApp) {
                     )
                 }
             }
-        },
+        } },
     ) { pad ->
         NavHost(nav, start, Modifier.padding(pad)) {
             composable("login") { LoginScreen(env) }
@@ -110,6 +119,7 @@ fun AppRoot(app: FilesApp) {
             composable("shared") { SharedScreen(env) }
             composable("favorites") { FavoritesScreen(env) }
             composable("search") { SearchScreen(env) }
+            composable("trash") { TrashScreen(env) }
             composable("folder/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
                 FolderScreen(env, ItemId(it.arguments!!.getString("id")!!))
             }

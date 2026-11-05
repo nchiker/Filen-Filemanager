@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.filenfiles.core.FileItem
+import app.filenfiles.filen.friendlyOrNull
 import app.filenfiles.core.Origin
 import app.filenfiles.core.Permission
 import kotlinx.coroutines.CancellationException
@@ -39,8 +40,8 @@ sealed interface Load<out T> {
     data class Fail(val message: String) : Load<Nothing>
 }
 
-fun Throwable.friendly(): String = when (this) {
-    is FilenSdkException -> runCatching { message() }.getOrNull() ?: "Filen error"
+fun Throwable.friendly(): String = friendlyOrNull() ?: when (this) {
+    is FilenSdkException -> runCatching { serverMessage() ?: message() }.getOrNull() ?: "Filen error"
     is SecurityException -> "Permission needed: grant “All files access” to browse this folder."
     else -> message ?: javaClass.simpleName
 }

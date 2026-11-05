@@ -37,7 +37,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -56,6 +56,11 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val sharedFiles = ConcurrentHashMap<String, SharedFileNode>() // key = full ItemId value
 
     private val client get() = session.client
+
+    /** IO-dispatcher wrapper that reports SDK failures to the session (so a rejected login is noticed). */
+    private suspend inline fun <T> io(crossinline block: suspend () -> T): T = withContext(Dispatchers.IO) {
+        try { block() } catch (e: Throwable) { session.noteError(e); throw e }
+    }
 
     private suspend inline fun <T> timed(label: String, block: () -> T): T {
         val t = System.nanoTime()
@@ -146,7 +151,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     // ---------- listing ----------
 
-    override suspend fun list(folder: ItemId): Listing = withContext(Dispatchers.IO) {
+    override suspend fun list(folder: ItemId): Listing = io {
         when (folder.scheme) {
             P -> listPersonal(folder)
             else -> listShared(folder)
@@ -157,7 +162,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val root = rootUuid
         val uuid = if (folder.key == ROOT) root else folder.key
         val any = if (uuid == root) AnyNormalDir.Root(client.root()) else AnyNormalDir.Dir(client.getDir(uuid))
-        val res = timed("listDir") { client.listDir(any) }
+        val res = timed("listDir") { retryNetwork { client.listDir(any) } }
         val items = res.dirs.map(::personalDirItem) + res.files.map(::personalFileItem)
         val name = if (uuid == root) "Filen Drive" else dirCache[uuid]?.name ?: "Folder"
         val trail = personalTrail(uuid, root)
@@ -223,13 +228,13 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     // ---------- stat / favorites / recents ----------
 
-    override suspend fun stat(id: ItemId): FileItem? = withContext(Dispatchers.IO) {
+    override suspend fun stat(id: ItemId): FileItem? = io {
         if (id.scheme == P) {
-            if (id.key == ROOT) return@withContext null
-            personalFiles[id.key]?.let { return@withContext personalFileItem(it) }
-            client.getFileOptional(id.key)?.let { return@withContext personalFileItem(it) }
-            client.getDirOptional(id.key)?.let { return@withContext personalDirItem(it) }
-            return@withContext null
+            if (id.key == ROOT) return@io null
+            personalFiles[id.key]?.let { return@io personalFileItem(it) }
+            client.getFileOptional(id.key)?.let { return@io personalFileItem(it) }
+            client.getDirOptional(id.key)?.let { return@io personalDirItem(it) }
+            return@io null
         }
         if (sharedDirs[id.value] == null && sharedFiles[id.value] == null) {
             runCatching { listShared(ItemId("${id.scheme}:$ROOT")) }
@@ -240,12 +245,12 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
     }
 
-    override suspend fun favorites(): List<FileItem> = withContext(Dispatchers.IO) {
+    override suspend fun favorites(): List<FileItem> = io {
         val r = client.listFavorites()
         r.dirs.map(::personalDirItem) + r.files.map(::personalFileItem)
     }
 
-    override suspend fun recent(limit: Int): List<FileItem> = withContext(Dispatchers.IO) {
+    override suspend fun recent(limit: Int): List<FileItem> = io {
         val personal = runCatching { timed("listRecents") { client.listRecents() }.files.map(::personalFileItem) }.getOrDefault(emptyList())
         // Received shares appear in recents too, flagged by their origin so the UI can badge them.
         val received = runCatching {
@@ -278,9 +283,9 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     /** Warm the index in the background (called after sign-in) so the first search is fast. */
     fun warmUp() { if (session.isSignedIn) ensureIndexing() }
 
-    override suspend fun search(query: String, limit: Int): List<FileItem> = withContext(Dispatchers.IO) {
+    override suspend fun search(query: String, limit: Int): List<FileItem> = io {
         val q = query.trim().lowercase()
-        if (q.isEmpty() || !session.isSignedIn) return@withContext emptyList()
+        if (q.isEmpty() || !session.isSignedIn) return@io emptyList()
         // Wait briefly for the index; after that answer from whatever has been indexed so far.
         ensureIndexing()?.let { job -> kotlinx.coroutines.withTimeoutOrNull(SEARCH_WAIT_MS) { job.join() } }
         val shared = synchronized(sharedLock) { sharedIndex.toList() }
@@ -329,13 +334,13 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         return if (id.key == ROOT || id.key == root) AnyNormalDir.Root(client.root()) else AnyNormalDir.Dir(client.getDir(id.key))
     }
 
-    override suspend fun createFolder(parent: ItemId, name: String): ItemId = withContext(Dispatchers.IO) {
+    override suspend fun createFolder(parent: ItemId, name: String): ItemId = io {
         val d = client.createDir(personalDir(parent), name)
         personalDirItem(d).id.also { indexedAt.set(0) } // invalidate the search index
     }
 
     override suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FileItem =
-        withContext(Dispatchers.IO) {
+        io {
             var sent = 0L
             val cb = object : JsFileUploadCallback {
                 // `uploadedBytes` is a delta since the previous call
@@ -353,7 +358,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override fun canModify(item: FileItem) = item.origin == Origin.FILEN_PERSONAL && item.id.scheme == P && item.id.key != ROOT
 
-    override suspend fun rename(item: FileItem, newName: String): FileItem = withContext(Dispatchers.IO) {
+    override suspend fun rename(item: FileItem, newName: String): FileItem = io {
         require(canModify(item)) { "This item cannot be renamed" }
         val out = if (item.isDirectory)
             personalDirItem(client.updateDirMetadata(dirObj(item.id), DirectoryMetaChanges(name = newName, created = CreatedTime.Keep)))
@@ -362,7 +367,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         invalidate(); out
     }
 
-    override suspend fun move(item: FileItem, newParent: ItemId): FileItem = withContext(Dispatchers.IO) {
+    override suspend fun move(item: FileItem, newParent: ItemId): FileItem = io {
         require(canModify(item)) { "This item cannot be moved" }
         val parent = personalDir(newParent)
         val out = if (item.isDirectory) personalDirItem(client.moveDir(dirObj(item.id), parent))
@@ -370,64 +375,113 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         invalidate(); out
     }
 
-    override suspend fun trash(item: FileItem): (suspend () -> Unit)? = withContext(Dispatchers.IO) {
+    override suspend fun trash(item: FileItem): (suspend () -> Unit)? = io {
         require(canModify(item)) { "This item cannot be deleted" }
         val undo: suspend () -> Unit = if (item.isDirectory) {
             val t = client.trashDir(dirObj(item.id))
-            ({ withContext(Dispatchers.IO) { personalDirItem(client.restoreDir(t)); invalidate() } })
+            ({ io { personalDirItem(client.restoreDir(t)); invalidate() } })
         } else {
             val t = client.trashFile(fileObj(item.id))
-            ({ withContext(Dispatchers.IO) { personalFileItem(client.restoreFile(t)); invalidate() } })
+            ({ io { personalFileItem(client.restoreFile(t)); invalidate() } })
         }
         invalidate()
         undo
     }
 
+    // ---------- trash ----------
+
+    private val trashedFiles = ConcurrentHashMap<String, FFile>()
+    private val trashedDirs = ConcurrentHashMap<String, Dir>()
+
+    override suspend fun listTrash(): List<FileItem> = io {
+        val res = timed("listTrash") { client.listTrash() }
+        trashedFiles.clear(); trashedDirs.clear()
+        res.dirs.forEach { trashedDirs[it.uuid] = it }
+        res.files.forEach { trashedFiles[it.uuid] = it }
+        val dirs = res.dirs.map { d -> FileItem(ItemId("$P:${d.uuid}"), dirName(d.meta), true, 0, d.timestamp, null, Origin.FILEN_PERSONAL) }
+        val files = res.files.map { f ->
+            val i = fileInfo(f.meta, f.uuid)
+            FileItem(ItemId("$P:${f.uuid}"), i.name, false, f.size.toLong(), i.modified ?: f.timestamp, mimeOf(i.name, i.mime), Origin.FILEN_PERSONAL)
+        }
+        (dirs + files).sortedByDescending { it.modified }
+    }
+
+    override suspend fun restore(item: FileItem): Unit = io {
+        if (item.isDirectory) personalDirItem(client.restoreDir(trashedDirs[item.id.key] ?: error("Trash changed; reload it")))
+        else personalFileItem(client.restoreFile(trashedFiles[item.id.key] ?: error("Trash changed; reload it")))
+        trashedDirs.remove(item.id.key); trashedFiles.remove(item.id.key)
+        invalidate()
+    }
+
+    override suspend fun deletePermanently(item: FileItem): Unit = io {
+        if (item.isDirectory) client.deleteDirPermanently(trashedDirs[item.id.key] ?: error("Trash changed; reload it"))
+        else client.deleteFilePermanently(trashedFiles[item.id.key] ?: error("Trash changed; reload it"))
+        trashedDirs.remove(item.id.key); trashedFiles.remove(item.id.key)
+    }
+
+    override suspend fun emptyTrash(): Unit = io {
+        client.emptyTrash(); trashedDirs.clear(); trashedFiles.clear()
+    }
+
     // ---------- download ----------
 
     override suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit): MaterializedFile =
-        withContext(Dispatchers.IO) {
+        io {
             val safe = item.name.replace('/', '_').ifBlank { "file" }
-            val dir = JFile(context.cacheDir, "open/${item.id.scheme}/${item.id.key}-${item.size}").apply { mkdirs() }
+            val dir = JFile(LocalCache.dir(context, LocalCache.OPEN), "${item.id.scheme}/${item.id.key}-${item.size}").apply { mkdirs() }
             val target = JFile(dir, safe)
             if (target.isFile && target.length() == item.size) {
-                return@withContext MaterializedFile(target.absolutePath, item.name, item.mime)
+                target.setLastModified(System.currentTimeMillis()) // LRU: a hit keeps it from being evicted
+                return@io MaterializedFile(target.absolutePath, item.name, item.mime)
             }
+            LocalCache.requireSpace(context, item.size)
             val any: AnyFile = if (item.id.scheme == P) {
                 AnyFile.File(personalFiles[item.id.key] ?: client.getFile(item.id.key))
             } else {
                 (sharedFiles[item.id.value] ?: run { stat(item.id); sharedFiles[item.id.value] })?.any
                     ?: error("Shared file is no longer available; reopen it from the Shared tab.")
             }
-            var done = 0L
-            val cb = object : JsFileDownloadCallback {
-                // `downloadedBytes` is a delta since the previous call
-                override fun onUpdate(downloadedBytes: ULong) {
-                    done += downloadedBytes.toLong(); onProgress(done, item.size)
-                }
-            }
             val tmp = JFile(dir, "$safe.part")
-            client.downloadFileToPath(any, tmp.absolutePath, cb, ManagedFuture(null, null))
-            check(tmp.renameTo(target)) { "Could not finalise download" }
+            try {
+                retryNetwork { attempt ->
+                    tmp.delete() // the SDK restarts from byte 0, so a half-written file is never reused
+                    var done = 0L
+                    if (attempt > 0) onProgress(0, item.size)
+                    val cb = object : JsFileDownloadCallback {
+                        // `downloadedBytes` is a delta since the previous call
+                        override fun onUpdate(downloadedBytes: ULong) {
+                            done += downloadedBytes.toLong(); onProgress(done, item.size)
+                        }
+                    }
+                    client.downloadFileToPath(any, tmp.absolutePath, cb, ManagedFuture(null, null))
+                }
+                // A truncated file must never be cached as complete.
+                check(tmp.length() == item.size) { "Download was incomplete (${tmp.length()} of ${item.size} bytes). Try again." }
+                check(tmp.renameTo(target)) { "Could not finalise download" }
+            } finally {
+                tmp.delete() // no-op after a successful rename; removes partial data on failure or cancellation
+                dir.listFiles()?.filter(LocalCache::isTemp)?.forEach { it.delete() } // SDK scratch files (.filendl)
+            }
+            LocalCache.trim(context, target)
             MaterializedFile(target.absolutePath, item.name, item.mime)
         }
 
     /** SDK-made WebP thumbnail, cached on disk per file+size. Null for non-images or when the SDK can't make one. */
-    override suspend fun thumbnail(item: FileItem, sizePx: Int): String? = withContext(Dispatchers.IO) {
-        if (item.isDirectory || item.mime?.startsWith("image/") != true) return@withContext null
-        val target = JFile(context.cacheDir, "thumbs/${item.id.scheme}/${item.id.key.replace('/', '_')}-${item.size}-$sizePx.webp")
-        if (target.isFile && target.length() > 0) return@withContext target.absolutePath
+    override suspend fun thumbnail(item: FileItem, sizePx: Int): String? = io {
+        if (item.isDirectory || item.mime?.startsWith("image/") != true) return@io null
+        val target = JFile(LocalCache.dir(context, LocalCache.THUMBS), "${item.id.scheme}/${item.id.key.replace('/', '_')}-${item.size}-$sizePx.webp")
+        if (target.isFile && target.length() > 0) return@io target.absolutePath
         val any: AnyFile = if (item.id.scheme == P) {
             AnyFile.File(personalFiles[item.id.key] ?: client.getFile(item.id.key))
         } else {
-            (sharedFiles[item.id.value] ?: run { stat(item.id); sharedFiles[item.id.value] })?.any ?: return@withContext null
+            (sharedFiles[item.id.value] ?: run { stat(item.id); sharedFiles[item.id.value] })?.any ?: return@io null
         }
         val res = client.makeThumbnailInMemory(MakeThumbnailInMemoryParams(any, sizePx.toUInt(), sizePx.toUInt(), 80u))
-        if (res !is MakeThumbnailInMemoryResult.Thumbnail) return@withContext null
+        if (res !is MakeThumbnailInMemoryResult.Thumbnail) return@io null
         target.parentFile?.mkdirs()
         val tmp = JFile(target.parentFile, target.name + ".part")
         tmp.writeBytes(res.thumbnail.webpData)
-        if (tmp.renameTo(target)) target.absolutePath else null
+        if (tmp.renameTo(target)) { LocalCache.trim(context, target); target.absolutePath } else null
     }
 
     companion object {

@@ -88,7 +88,8 @@ private fun AccountAction(env: AppEnv) {
     if (show) AlertDialog(
         onDismissRequest = { show = false },
         title = { Text("Filen account") },
-        text = { Text((state as? FilenSession.State.LoggedIn)?.let { "Signed in as ${it.email}" } ?: "Not signed in") },
+        text = { Text((state as? FilenSession.State.LoggedIn)?.let { "Signed in as ${it.email}" }
+            ?: if (state is FilenSession.State.Expired) "Session expired" else "Not signed in") },
         confirmButton = {
             if (state is FilenSession.State.LoggedIn)
                 TextButton({ show = false; env.app.session.logout() }) { Text("Sign out") }
@@ -102,7 +103,7 @@ private fun AccountAction(env: AppEnv) {
 
 @Composable
 fun LoginScreen(env: AppEnv) {
-    var email by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(env.app.session.lastEmail.orEmpty()) }
     var pw by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -115,6 +116,8 @@ fun LoginScreen(env: AppEnv) {
     Column(Modifier.fillMaxSize().padding(24.dp).imePadding(), Arrangement.Center, Alignment.CenterHorizontally) {
         Icon(Icons.Filled.Cloud, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         Text("Sign in to Filen", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 12.dp))
+        if (state is FilenSession.State.Expired)
+            Text("Your session expired. Sign in again to keep using your Filen files.", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
         OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
         Spacer(Modifier.height(8.dp))
@@ -271,6 +274,14 @@ fun FilesScreen(env: AppEnv) {
                 else if (!signedIn) item { SectionTitle("Filen") }
                 items(filen, key = { it.id.value }) { RootRow(it) { env.nav.navigate(folderRoute(it.id)) } }
                 if (!signedIn) item { SignInRow { env.nav.navigate("login") } }
+                else item {
+                    ListItem(
+                        modifier = Modifier.clickable { env.nav.navigate("trash") },
+                        leadingContent = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.primary) },
+                        headlineContent = { Text("Trash") },
+                        supportingContent = { Text("Restore or permanently delete Filen items") },
+                    )
+                }
                 item { SectionTitle("This device") }
                 if (!hasFiles) item { AllFilesBanner(env) }
                 items(all.filter { it.origin == Origin.LOCAL }, key = { it.id.value }) { RootRow(it) { env.nav.navigate(folderRoute(it.id)) } }

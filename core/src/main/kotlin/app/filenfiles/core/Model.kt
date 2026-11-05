@@ -98,6 +98,15 @@ interface WritableStorage {
     suspend fun trash(item: FileItem): (suspend () -> Unit)?
 }
 
+/** Implemented by providers with a recoverable trash (Filen). Items are top-level trashed entries. */
+interface TrashStorage {
+    suspend fun listTrash(): List<FileItem>
+    /** Puts [item] back where it came from. */
+    suspend fun restore(item: FileItem)
+    suspend fun deletePermanently(item: FileItem)
+    suspend fun emptyTrash()
+}
+
 /** Combines providers, routing by [ItemId.scheme]. */
 class StorageRouter(private val providers: List<StorageProvider>) {
     fun writable(id: ItemId): WritableStorage? =
@@ -105,6 +114,8 @@ class StorageRouter(private val providers: List<StorageProvider>) {
 
     fun modifier(item: FileItem): WritableStorage? =
         (providers.firstOrNull { it.owns(item.id) } as? WritableStorage)?.takeIf { it.canModify(item) }
+
+    fun trashStorage(): TrashStorage? = providers.firstNotNullOfOrNull { it as? TrashStorage }
 
     fun provider(id: ItemId): StorageProvider =
         providers.firstOrNull { it.owns(id) } ?: error("No provider for ${id.value}")

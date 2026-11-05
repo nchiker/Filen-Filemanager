@@ -78,7 +78,7 @@ fun PdfViewer(path: String, modifier: Modifier = Modifier) {
                         bmp = withContext(Dispatchers.Default) {
                             mutex.withLock {
                                 r.openPage(index).use { page ->
-                                    val h = (widthPx * page.height.toFloat() / page.width).toInt().coerceAtLeast(1)
+                                    val h = (widthPx * page.height.toFloat() / page.width).toInt().coerceIn(1, 6000)
                                     Bitmap.createBitmap(widthPx, h, Bitmap.Config.ARGB_8888).also {
                                         it.eraseColor(AColor.WHITE)
                                         page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)

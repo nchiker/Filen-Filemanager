@@ -20,6 +20,8 @@ class FilenSession(private val context: Context) {
         data object Unknown : State
         data object LoggedOut : State
         data class LoggedIn(val email: String) : State
+        /** The server rejected our credentials; the user has to sign in again. */
+        data class Expired(val email: String) : State
     }
 
     private val _state = MutableStateFlow<State>(State.Unknown)
@@ -60,7 +62,7 @@ class FilenSession(private val context: Context) {
     suspend fun login(email: String, password: String, twoFactor: String?) {
         val c = unauth().login(LoginParams(email.trim(), password, twoFactor?.takeIf { it.isNotBlank() }))
         val s = c.toStringified()
-        prefs.edit().putString("session", encode(s)).apply()
+        prefs.edit().putString("session", encode(s)).putString("lastEmail", s.email).apply()
         _client = c
         _state.value = State.LoggedIn(s.email)
     }
@@ -69,6 +71,22 @@ class FilenSession(private val context: Context) {
         prefs.edit().remove("session").apply()
         _client = null
         _state.value = State.LoggedOut
+    }
+
+    /** Email of the last account, to prefill the sign-in form after an expiry. */
+    val lastEmail: String? get() = (state.value as? State.Expired)?.email ?: runCatching { prefs.getString("lastEmail", null) }.getOrNull()
+
+    /**
+     * Called with every failure coming out of the SDK. A rejected session (revoked, password changed, token
+     * expired) can't recover by retrying: drop the dead client and its stored copy so the UI asks for a fresh
+     * sign-in instead of showing the same error forever. Network errors never reach this branch.
+     */
+    fun noteError(e: Throwable) {
+        if (e.failureKind() != FailureKind.AUTH) return
+        val cur = _state.value as? State.LoggedIn ?: return
+        prefs.edit().remove("session").putString("lastEmail", cur.email).apply()
+        _client = null
+        _state.value = State.Expired(cur.email)
     }
 
     private fun encode(s: StringifiedClient) = JSONObject()
