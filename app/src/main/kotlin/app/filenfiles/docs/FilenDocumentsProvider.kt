@@ -19,6 +19,10 @@ import app.filenfiles.FilesApp
 import app.filenfiles.MainActivity
 import app.filenfiles.R
 import app.filenfiles.core.FileItem
+import app.filenfiles.core.Folder
+import app.filenfiles.core.Listing
+import app.filenfiles.filen.FailureKind
+import app.filenfiles.filen.failureKind
 import app.filenfiles.core.ItemId
 import app.filenfiles.core.Origin
 import app.filenfiles.core.UploadStatus
@@ -202,7 +206,20 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
         requireSignedIn()
         val parent = idOf(parentDocumentId)
-        val listing = io { blocking { app.router.list(parent) } }
+        // Offline, a fresh listing can't be fetched. Answer from the last listing we saw (if any) plus the uploads we know
+        // about, so a client that just wrote a file can still see it "Waiting for network…" instead of getting an error.
+        var stale = false
+        val listing = try {
+            blocking { app.router.list(parent) }
+        } catch (e: OperationCanceledException) { throw e
+        } catch (e: Throwable) {
+            if (e.failureKind() == FailureKind.NETWORK && (app.listingCache[parent.value] != null || pendingRowsIn(parent).isNotEmpty())) {
+                stale = true
+                app.listingCache[parent.value] ?: Listing(Folder(parent, "", Origin.FILEN_PERSONAL), emptyList(), emptyList())
+            } else io<Listing> { throw e }
+        }
+        if (!stale) app.listingCache[parent.value] = listing // remembered for offline answers (dropped on sign-out)
+        if (stale) android.util.Log.d("FilenDebug", "Offline: answering the listing of $parentDocumentId from the cache and the upload queue")
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
         c.setNotificationUri(context!!.contentResolver, android.provider.DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId))
         listing.items.forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }

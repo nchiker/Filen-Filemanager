@@ -205,7 +205,8 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   for files still on their way to Filen come from the persisted queue (so they survive a process restart, ids are
   `filen-pending:<millis>-<n>`) and carry `COLUMN_SUMMARY` = "Uploading…" / "Waiting for network…" / "Upload failed: <reason>"
   (FAILED rows stay listed until dismissed in the app). `RecentUploads` keeps a receipt of each finished upload for ~2 minutes, so
-  a folder listing never has a gap between the pending row disappearing and the real row showing. No provider `call()` API
+  a folder listing never has a gap between the pending row disappearing and the real row showing. Offline, `queryChildDocuments`
+  answers from the last listing it saw (`FilesApp.listingCache`) plus the queue, so the "Waiting for network…" status is visible. No provider `call()` API
   (MANAGE_DOCUMENTS gates it). With App lock on and locked, the provider refuses other apps (AuthenticationRequiredException).
 
 ## Ideas not done yet
