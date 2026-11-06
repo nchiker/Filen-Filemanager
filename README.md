@@ -1,6 +1,12 @@
 # Filen Files
 
 [![Build](https://github.com/nchiker/Filen-Filemanager/actions/workflows/build.yml/badge.svg)](https://github.com/nchiker/Filen-Filemanager/actions/workflows/build.yml)
+[![Latest release](https://img.shields.io/github/v/release/nchiker/Filen-Filemanager?label=latest%20release)](https://github.com/nchiker/Filen-Filemanager/releases/latest)
+
+## [⬇ Download the APK](https://github.com/nchiker/Filen-Filemanager/releases/latest/download/Filen-Files.apk)
+
+Android 8.0+ (arm64). Open the downloaded file to install it - [install steps](#install) ·
+[all releases](https://github.com/nchiker/Filen-Filemanager/releases)
 
 A native Android file manager (Kotlin, Jetpack Compose, Material 3) with [Filen](https://filen.io) as its
 primary cloud provider, alongside local Android storage. The goal is a Google Files / Samsung My Files
@@ -8,8 +14,8 @@ replacement, not just another Filen client.
 
 ## Install
 
-Download the latest APK from the [Releases page](https://github.com/nchiker/Filen-Filemanager/releases/latest)
-and open it on an Android 8.0+ phone (arm64; allow installs from your browser/file manager when asked). Sign in
+Download the latest APK ([direct link](https://github.com/nchiker/Filen-Filemanager/releases/latest/download/Filen-Files.apk),
+or the [Releases page](https://github.com/nchiker/Filen-Filemanager/releases/latest)) and open it on an Android 8.0+ phone (arm64; allow installs from your browser/file manager when asked). Sign in
 to Filen, or skip for local-only, and grant **All files access**. Later releases install over the previous one
 (they are signed with the same key). The app is not on any store.
 

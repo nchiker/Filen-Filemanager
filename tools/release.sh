@@ -18,13 +18,15 @@ tools/publish.sh                                   # the tag must point at code 
 ./gradlew :app:assembleRelease -q
 SRC=app/build/outputs/apk/release/app-release.apk
 APK="build/Filen-Files-$VERSION.apk"; mkdir -p build; cp "$SRC" "$APK"
+# Same file under a fixed name, so https://github.com/<repo>/releases/latest/download/Filen-Files.apk always works.
+STABLE="build/Filen-Files.apk"; cp "$SRC" "$STABLE"
 "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | grep -q "CN=Filen Files" \
   || { echo "APK is not signed with the release key" >&2; exit 1; }
 
 SHA="$(git rev-list -1 filen-only)"
 if gh release view "v$VERSION" --repo "$REPO" >/dev/null 2>&1; then
-  echo "Release v$VERSION exists: replacing its APK"; gh release upload "v$VERSION" "$APK" --repo "$REPO" --clobber
+  echo "Release v$VERSION exists: replacing its APK"; gh release upload "v$VERSION" "$APK" "$STABLE" --repo "$REPO" --clobber
 else
-  gh release create "v$VERSION" "$APK" --repo "$REPO" --target main --title "Filen Files $VERSION" --notes "$NOTES"
+  gh release create "v$VERSION" "$APK" "$STABLE" --repo "$REPO" --target main --title "Filen Files $VERSION" --notes "$NOTES"
 fi
 echo "Released: https://github.com/$REPO/releases/tag/v$VERSION"
