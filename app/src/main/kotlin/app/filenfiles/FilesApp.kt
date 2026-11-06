@@ -106,6 +106,23 @@ class FilesApp : Application() {
     /** For user actions that must finish even if the dialog/screen that started them goes away (e.g. sharing a folder). */
     val appScope: CoroutineScope get() = scope
     lateinit var prefs: Prefs; private set
+    lateinit var appLock: AppLock; private set
+
+    val installedVersion: String get() = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "0"
+
+    /** Asks GitHub for the newest release (at most daily unless [force]); remembers whether it is newer than this build. */
+    fun checkForUpdate(force: Boolean = false, onDone: (UpdateChecker.Release?) -> Unit = {}) {
+        if (!force && (!prefs.autoUpdateCheck || System.currentTimeMillis() - prefs.lastUpdateCheck < 24 * 3_600_000L)) return
+        scope.launch {
+            val r = UpdateChecker.latest()
+            if (r != null) {
+                prefs.lastUpdateCheck = System.currentTimeMillis()
+                if (UpdateChecker.isNewer(r, installedVersion)) prefs.setAvailableUpdate(r.version, r.apkUrl ?: r.pageUrl)
+                else prefs.setAvailableUpdate(null, null)
+            }
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onDone(r) }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -114,6 +131,8 @@ class FilesApp : Application() {
         filen = FilenStorageProvider(this, session)
         router = StorageRouter(listOf(filen, local))
         prefs = Prefs(this)
+        appLock = AppLock(prefs)
+        app.filenfiles.backup.CameraBackup.apply(this) // keep the schedule in line with the saved settings
         transfers = TransferManager(this)
         // Partial downloads / upload staging from a previous run are garbage; trim caches to their caps.
         scope.launch { runCatching { LocalCache.sweepAtStartup(this@FilesApp) } }
@@ -126,6 +145,11 @@ class FilesApp : Application() {
                 runCatching {
                     contentResolver.notifyChange(
                         android.provider.DocumentsContract.buildRootsUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY), null)
+                }
+                when (it) {
+                    is FilenSession.State.LoggedIn -> transfers.resume()
+                    is FilenSession.State.LoggedOut -> { transfers.clearAll(); app.filenfiles.backup.CameraBackup.disableAndForget(this@FilesApp) }
+                    else -> Unit
                 }
                 if (it is FilenSession.State.LoggedIn) runCatching {
                     applyServerFavorites(filen.favorites().map { f -> f.id.value }.toSet())

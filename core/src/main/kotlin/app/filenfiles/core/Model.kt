@@ -76,6 +76,17 @@ interface StorageProvider {
      */
     suspend fun thumbnail(item: FileItem, sizePx: Int): String? = null
 
+    /**
+     * Writes [item]'s content to [dest] (a new file; its folder exists). [onProgress] gets the bytes written so far
+     * for this file. The default goes through [materialize] and a copy; providers that can write straight to the
+     * destination (Filen) override it to avoid a second copy in the cache.
+     */
+    suspend fun download(item: FileItem, dest: java.io.File, onProgress: (Long) -> Unit = {}) {
+        val m = materialize(item) { done, _ -> onProgress(done) }
+        java.io.File(m.path).copyTo(dest, overwrite = false)
+        onProgress(item.size)
+    }
+
     fun owns(id: ItemId): Boolean
 }
 
@@ -131,6 +142,21 @@ interface SharingStorage {
     suspend fun unshare(item: FileItem)
 }
 
+/** One earlier version of a file. */
+data class VersionInfo(val id: String, val size: Long, val modified: Long, val name: String?)
+
+/** Implemented by providers that keep earlier versions of files (Filen personal drive). */
+interface VersionStorage {
+    fun canVersion(item: FileItem): Boolean
+    suspend fun versions(item: FileItem): List<VersionInfo>
+    /** Makes [version] the current content of [item]; returns the item as it is afterwards (its id may change). */
+    suspend fun restoreVersion(item: FileItem, version: VersionInfo): FileItem
+    suspend fun deleteVersion(item: FileItem, version: VersionInfo)
+    /** Whether the account keeps earlier versions at all (a replaced file is simply overwritten when it doesn't). */
+    suspend fun versioningEnabled(): Boolean
+    suspend fun setVersioningEnabled(enabled: Boolean)
+}
+
 /** Combines providers, routing by [ItemId.scheme]. */
 class StorageRouter(private val providers: List<StorageProvider>) {
     fun writable(id: ItemId): WritableStorage? =
@@ -141,6 +167,9 @@ class StorageRouter(private val providers: List<StorageProvider>) {
 
     fun favoriteStorage(item: FileItem): FavoriteStorage? =
         (providers.firstOrNull { it.owns(item.id) } as? FavoriteStorage)?.takeIf { it.canFavorite(item) }
+
+    fun versioning(item: FileItem): VersionStorage? =
+        (providers.firstOrNull { it.owns(item.id) } as? VersionStorage)?.takeIf { it.canVersion(item) }
 
     fun sharing(): SharingStorage? = providers.firstNotNullOfOrNull { it as? SharingStorage }
 

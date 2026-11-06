@@ -21,7 +21,7 @@ android {
     // Release signing key lives OUTSIDE the repo (never commit it). Override the location with FILEN_KEYSTORE_PROPS.
     // Without it, release builds fall back to the debug key (installable for testing, not for publishing).
     val ksProps = Properties().apply {
-        val f = file(System.getenv("FILEN_KEYSTORE_PROPS") ?: "${System.getProperty("user.home")}/.local/share/filen-release/keystore.properties")
+        val f = file(System.getenv("FILEN_KEYSTORE_PROPS") ?: "${System.getProperty("user.home")}/APK-Keys/filen/keystore.properties")
         if (f.isFile) f.inputStream().use { load(it) }
     }
     signingConfigs {
@@ -34,7 +34,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
-            isMinifyEnabled = false
+            isMinifyEnabled = true      // R8 code shrinking + obfuscation; keep rules in proguard-rules.pro
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 }
@@ -53,5 +55,8 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.10.2")
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.security:security-crypto:1.1.0")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.2")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
 }

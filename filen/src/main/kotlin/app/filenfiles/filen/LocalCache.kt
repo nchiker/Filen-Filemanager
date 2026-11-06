@@ -31,9 +31,8 @@ object LocalCache {
         }
     }
 
-    /** At process start: no transfer is running, so partial downloads and upload staging are leftovers. */
+    /** At process start: no transfer is running, so partial downloads are leftovers. (Upload staging is swept by TransferManager, which knows what is still queued.) */
     fun sweepAtStartup(ctx: Context) {
-        dir(ctx, UPLOAD).deleteRecursively()
         for (n in listOf(OPEN, THUMBS, INDEX)) dir(ctx, n).walkBottomUp().filter { it.isFile && isTemp(it) }.forEach { it.delete() }
         trim(ctx)
     }

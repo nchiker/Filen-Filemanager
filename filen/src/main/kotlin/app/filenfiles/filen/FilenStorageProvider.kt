@@ -40,7 +40,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -263,6 +263,41 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         out.addFirst(Crumb(ItemId("$scheme:$ROOT"), rootTitle(scheme)))
         return out
     }
+
+    // ---------- file version history ----------
+
+    private val versionObjs = ConcurrentHashMap<String, uniffi.filen_sdk_rs.FileVersion>()
+
+    override fun canVersion(item: FileItem) = item.id.scheme == P && !item.isDirectory && item.id.key != ROOT
+
+    override suspend fun versions(item: FileItem): List<VersionInfo> = io {
+        require(canVersion(item)) { "No version history for this item" }
+        val file = fileObj(item.id)
+        // The SDK lists the current content too; only earlier versions are useful here.
+        val list = client.listFileVersions(file).filter { it.uuid != file.uuid }
+        list.forEach { versionObjs[it.uuid] = it }
+        list.sortedByDescending { it.timestamp }.map { v ->
+            VersionInfo(v.uuid, v.size.toLong(), v.timestamp, (v.metadata as? FileMeta.Decoded)?.v1?.name)
+        }
+    }
+
+    override suspend fun restoreVersion(item: FileItem, version: VersionInfo): FileItem = io {
+        val v = versionObjs[version.id] ?: error("Version list changed; reopen the history")
+        val parent = indexParentOf(item.id)
+        val f = client.restoreFileVersion(fileObj(item.id), v)
+        indexRemoveSubtree(item.id) // the restored file may come back under a new id
+        personalFileItem(f).also { indexUpsert(it, personalParentId(f.parent) ?: parent) }
+    }
+
+    override suspend fun deleteVersion(item: FileItem, version: VersionInfo): Unit = io {
+        val v = versionObjs[version.id] ?: error("Version list changed; reopen the history")
+        client.deleteFileVersion(v); versionObjs.remove(version.id)
+    }
+
+    override suspend fun versioningEnabled(): Boolean = io { client.getUserInfo().versioningEnabled }
+    override suspend fun setVersioningEnabled(enabled: Boolean): Unit = io { client.setVersioningEnabled(enabled) }
+
+    private fun indexParentOf(id: ItemId): String? = synchronized(indexLock) { personalIndex.firstOrNull { it.item.id == id }?.parent }
 
     // ---------- sharing with other people ----------
 
@@ -678,6 +713,37 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             LocalCache.trim(context, target)
             MaterializedFile(target.absolutePath, item.name, item.mime)
         }
+
+    /** Downloads straight into [dest] (no cache copy): `.part` file, size check, atomic rename, cleanup on failure. */
+    override suspend fun download(item: FileItem, dest: JFile, onProgress: (Long) -> Unit): Unit = io {
+        val dir = dest.absoluteFile.parentFile!!.apply { mkdirs() }
+        if (dir.usableSpace < item.size + LocalCache.FREE_MARGIN) {
+            throw java.io.IOException("No space left on device (need ${item.size shr 20} MB, ${dir.usableSpace shr 20} MB free)")
+        }
+        val any: AnyFile = if (item.id.scheme == P) {
+            AnyFile.File(personalFiles[item.id.key] ?: client.getFile(item.id.key))
+        } else {
+            (sharedFiles[item.id.value] ?: run { stat(item.id); sharedFiles[item.id.value] })?.any
+                ?: error("Shared file is no longer available; reopen it from the Shared tab.")
+        }
+        val tmp = JFile(dir, dest.name + ".part")
+        try {
+            retryNetwork { attempt ->
+                tmp.delete() // the SDK restarts from byte 0
+                var done = 0L
+                if (attempt > 0) onProgress(0)
+                val cb = object : JsFileDownloadCallback {
+                    override fun onUpdate(downloadedBytes: ULong) { done += downloadedBytes.toLong(); onProgress(done) }
+                }
+                client.downloadFileToPath(any, tmp.absolutePath, cb, ManagedFuture(null, null))
+            }
+            check(tmp.length() == item.size) { "Download was incomplete (${tmp.length()} of ${item.size} bytes). Try again." }
+            check(tmp.renameTo(dest)) { "Could not finalise download" }
+        } finally {
+            tmp.delete()
+            dir.listFiles()?.filter { it.name.startsWith(dest.name) && LocalCache.isTemp(it) }?.forEach { it.delete() } // SDK scratch for THIS file only
+        }
+    }
 
     /** SDK-made WebP thumbnail, cached on disk per file+size. Null for non-images or when the SDK can't make one. */
     override suspend fun thumbnail(item: FileItem, sizePx: Int): String? = io {

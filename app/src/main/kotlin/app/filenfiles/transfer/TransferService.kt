@@ -28,18 +28,21 @@ class TransferService : Service() {
         startForeground(ID, build("Preparing…", 0, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         val manager = (application as FilesApp).transfers
         scope.launch {
-            manager.items.collect { list ->
+            kotlinx.coroutines.flow.combine(manager.items, manager.settled) { l, s -> l to s }.collect { (list, settled) ->
                 val active = list.filter { it.active }
-                if (active.isEmpty()) { stopSelf(); return@collect }
+                // Until the session is known a restarted service has nothing to show but must not give up yet.
+                if (active.isEmpty()) { if (settled) stopSelf(); return@collect }
                 val cur = active.firstOrNull { it.state == TransferManager.State.UPLOADING } ?: active.first()
                 val text = when (cur.state) {
                     TransferManager.State.WAITING_NETWORK -> "Waiting for network… ${cur.name}"
-                    else -> "Uploading ${cur.name}" + if (active.size > 1) " (+${active.size - 1} more)" else ""
+                    else -> "${cur.verb} ${cur.name}" + if (active.size > 1) " (+${active.size - 1} more)" else ""
                 }
                 nm.notify(ID, build(text, cur.done, cur.size))
             }
         }
-        return START_NOT_STICKY // a killed process loses its in-memory queue; don't restart into an empty one
+        // The queue is persisted: if the system kills the process mid-upload it restarts this service, the app
+        // restores the queue (TransferManager.resume) and carries on.
+        return START_STICKY
     }
 
     private fun build(text: String, done: Long, total: Long): Notification {

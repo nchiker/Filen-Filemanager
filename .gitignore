@@ -11,3 +11,4 @@ filen/src/main/java/generated/
 *.keystore
 keystore.properties
 *.jks
+docs/PRIVATE_NOTES.md

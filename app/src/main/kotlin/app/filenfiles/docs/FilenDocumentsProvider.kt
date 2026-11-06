@@ -75,6 +75,11 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     /** Waits (briefly) for session restore, which runs on a background thread after process start. */
     private fun requireSignedIn() {
+        if (app.appLock.isLocked) { // opens the app, which asks to unlock
+            val ctx = context!!
+            val pi = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+            throw AuthenticationRequiredException(SecurityException("Filen Files is locked"), pi)
+        }
         val session = app.session
         val deadline = System.currentTimeMillis() + 10_000
         while (session.state.value is FilenSession.State.Unknown && System.currentTimeMillis() < deadline) Thread.sleep(50)
@@ -101,7 +106,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val c = MatrixCursor(projection ?: ROOT_PROJECTION)
         val s = app.session.state.value
-        if (s !is FilenSession.State.LoggedIn) return c
+        if (s !is FilenSession.State.LoggedIn || app.appLock.isLocked) return c
         c.newRow().apply {
             add(Root.COLUMN_ROOT_ID, "filen"); add(Root.COLUMN_DOCUMENT_ID, "filen:root")
             add(Root.COLUMN_TITLE, "Filen Drive"); add(Root.COLUMN_SUMMARY, s.email)

@@ -1,5 +1,7 @@
 # Filen Files
 
+[![Build](https://github.com/nchiker/Filen-Filemanager/actions/workflows/build.yml/badge.svg)](https://github.com/nchiker/Filen-Filemanager/actions/workflows/build.yml)
+
 A native Android file manager (Kotlin, Jetpack Compose, Material 3) with [Filen](https://filen.io) as its
 primary cloud provider, alongside local Android storage. The goal is a Google Files / Samsung My Files
 replacement, not just another Filen client.
@@ -23,6 +25,11 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
 - **Search** – across Filen personal, shared and local files, with scope chips.
 - **Viewers** – built-in image (pinch-zoom) and PDF viewers; everything else goes to Android's Open With.
   Filen files are downloaded and decrypted on demand into the app cache (no manual download step).
+- **Copy, move and save to device** across Filen, shared and local storage (folders too); **zip / unzip**; **multi-select**
+  with batch actions; **file version history**; **share with Filen contacts**; **trash**; an upload/copy queue that survives
+  the app being killed.
+- **Camera backup** to a Filen folder (Wi-Fi only by default, new photos only, sorted by month).
+- **App lock**, hide contents in recent apps, and an optional update check (Settings).
 - Light/dark theme (Material You colours on Android 12+).
 
 ## Architecture
@@ -79,7 +86,7 @@ so local folders are browsable.
 
 ## Limitations / not done yet
 
-- Verified on a Pixel 4a (Android 13) with a real account: sign-in and session restore, Filen Drive and received-share
+- Verified on a physical Android 13 phone with a live account: sign-in and session restore, Filen Drive and received-share
   browsing, badges, favorites, search, local storage, Filen download+decrypt into the image/PDF viewers and Open With,
   upload/new-folder visibility rules (offered in personal folders only, never in received shares). **Not verified:**
   writable received shares and outgoing shares (the test account had none); the upload picker flow itself (uploads were
@@ -117,15 +124,28 @@ adb shell "am broadcast -n app.filenfiles/.debug.DebugUploadReceiver --es dir /s
 adb logcat -s FilenDebug:V      # progress and DONE/FAILED
 ```
 
-## Publishing (maintainer)
+## Releasing (maintainer)
 
-This folder lives inside a larger local repo next to unrelated projects, so it is published on its own:
+This folder is published on its own from a larger local repo, so releases go through two scripts:
 
 ```bash
 tools/publish.sh     # commit first; pushes only this folder's history to GitHub main (git subtree split)
-tools/release.sh     # builds the signed release APK and attaches it to a GitHub Release (v<versionName>)
+tools/release.sh     # builds the signed, shrunk release APK and attaches it to a GitHub Release (v<versionName>)
 ```
 
-Bump `versionCode`/`versionName` in `app/build.gradle.kts` for every release. The release key is
-read from `~/.local/share/filen-release/keystore.properties` (override with `FILEN_KEYSTORE_PROPS`) and must never be
-committed; **back it up** - losing it means users have to uninstall before they can update.
+Bump `versionCode`/`versionName` in `app/build.gradle.kts` for every release. Release builds are signed with a
+private key that lives **outside the repository**: a `keystore.properties` file (store path, alias, passwords)
+whose location is given by `FILEN_KEYSTORE_PROPS`. It must never be committed - `*.jks` and `keystore.properties`
+are gitignored - and it must be backed up: if it is lost, users have to uninstall the app before they can update it.
+
+## License
+
+GNU Affero General Public License v3.0 or later - see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The Filen SDK
+this app is built on is AGPL-3.0, which is why the app is too.
+
+## Privacy
+
+The app talks to Filen's servers (your files stay end-to-end encrypted) and, optionally, to GitHub once a day to
+see whether a newer release exists (Settings > Updates; an anonymous request, switch it off if you prefer). There
+is no analytics or crash reporting. Opening recent apps can be blanked, and an app lock (fingerprint, face or screen
+lock) can be switched on in Settings.

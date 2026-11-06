@@ -34,7 +34,7 @@ fun TransfersPanel(env: AppEnv, padForNavBar: Boolean) {
                             when (cur.state) {
                                 State.WAITING_NETWORK -> "Waiting for network…"
                                 State.PREPARING -> "Preparing ${cur.name}"
-                                else -> "Uploading $position of ${all.size}"
+                                else -> "${cur.verb} $position of ${all.size}"
                             } + (if (cur.attempt > 1) " (attempt ${cur.attempt})" else ""),
                             style = MaterialTheme.typography.labelLarge,
                         )
@@ -47,14 +47,14 @@ fun TransfersPanel(env: AppEnv, padForNavBar: Boolean) {
                 else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             } else if (failed.isEmpty() && done > 0) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (done == 1) "Upload complete" else "$done uploads complete", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                    Text(if (done == 1) "Transfer complete" else "$done transfers complete", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
                     IconButton({ m.clearFinished() }) { Icon(Icons.Filled.Close, "Dismiss") }
                 }
             }
             failed.forEach { t ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Couldn't upload ${t.name}", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Couldn't finish ${t.name}", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(t.error ?: "Upload failed", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
                     }
                     IconButton({ m.retry(t.id) }) { Icon(Icons.Filled.Refresh, "Retry") }

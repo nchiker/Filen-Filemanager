@@ -55,7 +55,7 @@ class LocalStorageProvider(private val context: Context) : StorageProvider, Writ
             if (cur == internalRoot) break
             cur = cur.parentFile
         }
-        Listing(Folder(id(dir), dir.name.ifEmpty { "Internal storage" }, Origin.LOCAL), children.map(::toItem), trail)
+        Listing(Folder(id(dir), if (dir == internalRoot) "Internal storage" else dir.name.ifEmpty { "Internal storage" }, Origin.LOCAL), children.map(::toItem), trail)
     }
 
     override suspend fun stat(id: ItemId): FileItem? = withContext(Dispatchers.IO) {

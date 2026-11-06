@@ -5,6 +5,9 @@ import android.text.format.Formatter
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -145,7 +148,24 @@ fun subtitle(item: FileItem, ctx: android.content.Context): String {
 
 // ---------- item menu / actions ----------
 
+/**
+ * Multi-select state shared by every list: long-press an item to start, tap to add/remove, the bar at the top of
+ * the app (SelectionBar) offers actions on the whole selection. Cleared on navigation and Back.
+ */
+@Stable
+class Selection {
+    var items by mutableStateOf<Map<String, FileItem>>(emptyMap()); private set
+    /** The items of the list currently on screen, so "select all" knows what to select. */
+    var visible by mutableStateOf<List<FileItem>>(emptyList())
+    val active: Boolean get() = items.isNotEmpty()
+    fun isSelected(item: FileItem) = item.id.value in items
+    fun toggle(item: FileItem) { items = if (isSelected(item)) items - item.id.value else items + (item.id.value to item) }
+    fun selectAll() { items = visible.associateBy { it.id.value } }
+    fun clear() { items = emptyMap() }
+}
+
 class ItemActions(
+    val selection: Selection,
     val open: (FileItem) -> Unit,
     val openWith: (FileItem) -> Unit,
     val share: (FileItem) -> Unit,
@@ -155,6 +175,12 @@ class ItemActions(
     val rename: (FileItem) -> Unit = {},
     val move: (FileItem) -> Unit = {},
     val delete: (FileItem) -> Unit = {},
+    val copyTo: (FileItem) -> Unit = {},
+    val saveToDevice: (FileItem) -> Unit = {},
+    val history: (FileItem) -> Unit = {},
+    val canHistory: (FileItem) -> Boolean = { false },
+    val compress: (FileItem) -> Unit = {},
+    val extract: (FileItem) -> Unit = {},
     val canShareWith: (FileItem) -> Boolean = { false },
     val shareWith: (FileItem) -> Unit = {},
     val canStopSharing: (FileItem) -> Boolean = { false },
@@ -173,6 +199,11 @@ fun ItemMenu(item: FileItem, actions: ItemActions) {
                 DropdownMenuItem({ Text("Open with…") }, { open = false; actions.openWith(item) })
                 DropdownMenuItem({ Text("Share…") }, { open = false; actions.share(item) })
             }
+            DropdownMenuItem({ Text("Copy to…") }, { open = false; actions.copyTo(item) })
+            if (actions.canHistory(item)) DropdownMenuItem({ Text("Version history…") }, { open = false; actions.history(item) })
+            DropdownMenuItem({ Text("Compress to zip…") }, { open = false; actions.compress(item) })
+            if (!item.isDirectory && item.name.endsWith(".zip", ignoreCase = true)) DropdownMenuItem({ Text("Extract here…") }, { open = false; actions.extract(item) })
+            if (item.origin != Origin.LOCAL) DropdownMenuItem({ Text("Save to device") }, { open = false; actions.saveToDevice(item) })
             if (actions.canShareWith(item)) DropdownMenuItem({ Text("Share with a Filen contact…") }, { open = false; actions.shareWith(item) })
             if (actions.canStopSharing(item)) DropdownMenuItem({ Text("Stop sharing…") }, { open = false; actions.stopSharing(item) })
             val fav = actions.isFavorite(item)
@@ -267,9 +298,22 @@ fun ItemThumb(item: FileItem, size: androidx.compose.ui.unit.Dp, modifier: Modif
 @Composable
 fun FileRow(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
     val ctx = LocalContext.current
+    val sel = actions.selection
+    val selected = sel.isSelected(item)
+    val haptic = LocalHapticFeedback.current
     ListItem(
-        modifier = Modifier.clickable { actions.open(item) },
-        leadingContent = { ItemThumb(item, 44.dp) },
+        modifier = Modifier.combinedClickable(
+            onClick = { if (sel.active) sel.toggle(item) else actions.open(item) },
+            onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); sel.toggle(item) },
+        ),
+        colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
+        leadingContent = {
+            Box {
+                ItemThumb(item, 44.dp)
+                if (selected) Icon(Icons.Filled.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.align(Alignment.BottomEnd).size(20.dp).background(MaterialTheme.colorScheme.surface, androidx.compose.foundation.shape.CircleShape))
+            }
+        },
         headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Column {
@@ -280,7 +324,7 @@ fun FileRow(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (actions.isFavorite(item)) Icon(Icons.Filled.Star, "Favorite", tint = Color(0xFFF9AB00), modifier = Modifier.size(18.dp))
-                ItemMenu(item, actions)
+                if (!sel.active) ItemMenu(item, actions) else Spacer(Modifier.size(48.dp)) // keep row height while selecting
             }
         },
     )
@@ -289,14 +333,25 @@ fun FileRow(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileGridCell(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
-    Card(Modifier.fillMaxWidth().clickable { actions.open(item) }) {
+    val sel = actions.selection
+    val selected = sel.isSelected(item)
+    val haptic = LocalHapticFeedback.current
+    Card(
+        Modifier.fillMaxWidth().combinedClickable(
+            onClick = { if (sel.active) sel.toggle(item) else actions.open(item) },
+            onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); sel.toggle(item) },
+        ),
+        colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
+    ) {
         Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.fillMaxWidth()) {
                 ItemThumb(item, 96.dp, Modifier.align(Alignment.Center))
-                Box(
+                if (!sel.active) Box(
                     Modifier.align(Alignment.TopEnd).clip(androidx.compose.foundation.shape.CircleShape)
                         .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
                 ) { ItemMenu(item, actions) }
+                if (selected) Icon(Icons.Filled.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.align(Alignment.BottomEnd).size(22.dp).background(MaterialTheme.colorScheme.surface, androidx.compose.foundation.shape.CircleShape))
                 if (actions.isFavorite(item)) Icon(Icons.Filled.Star, null, tint = Color(0xFFF9AB00), modifier = Modifier.size(16.dp).align(Alignment.TopStart))
             }
             Spacer(Modifier.height(6.dp))
@@ -308,6 +363,8 @@ fun FileGridCell(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
 
 @Composable
 fun FileCollection(items: List<FileItem>, grid: Boolean, actions: ItemActions, modifier: Modifier = Modifier, mixed: Boolean = false, header: (@Composable () -> Unit)? = null) {
+    // Tells the selection bar what "select all" covers; also drops selected items that left this list (deleted/moved).
+    LaunchedEffect(items) { actions.selection.visible = items }
     if (grid) {
         LazyVerticalGrid(GridCells.Adaptive(120.dp), modifier, contentPadding = PaddingValues(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

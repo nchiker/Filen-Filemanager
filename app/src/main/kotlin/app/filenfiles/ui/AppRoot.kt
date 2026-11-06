@@ -49,6 +49,18 @@ fun AppRoot(app: FilesApp) {
     val snackbar = remember { SnackbarHostState() }
     var op by remember { mutableStateOf<Op?>(null) }
 
+    val selection = remember { Selection() }
+    /** "Save to device": copies Filen items into the Downloads folder (needs All files access). */
+    val saveToDownloads: (List<FileItem>) -> Unit = { items ->
+        val cloud = items.filter { it.origin != Origin.LOCAL }
+        if (!android.os.Environment.isExternalStorageManager()) {
+            Toast.makeText(ctx, "Grant “All files access” first (Home > the banner) to save files to this device.", Toast.LENGTH_LONG).show()
+        } else if (cloud.isNotEmpty()) {
+            val downloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            cloud.forEach { app.transfers.enqueueCopy(it, ItemId("local:" + downloads.absolutePath), move = false) }
+            scope.launch { snackbar.showSnackbar("Saving ${itemsLabel(cloud)} to Downloads…") }
+        }
+    }
     val actions = remember(app, nav) {
         fun withFile(item: FileItem, then: (MaterializedFile) -> Unit) {
             scope.launch {
@@ -61,6 +73,7 @@ fun AppRoot(app: FilesApp) {
             }
         }
         ItemActions(
+            selection = selection,
             open = { if (it.isDirectory) nav.navigate(folderRoute(it.id)) else nav.navigate(viewerRoute(it.id)) },
             openWith = { withFile(it) { f -> OpenWith.open(ctx, f) } },
             share = { withFile(it) { f -> OpenWith.share(ctx, f) } },
@@ -74,10 +87,16 @@ fun AppRoot(app: FilesApp) {
             isFavorite = { app.isStarred(it.id) },
             canModify = { app.router.modifier(it) != null },
             rename = { op = Op.Rename(it) },
-            move = { op = Op.Move(it) },
-            delete = { op = Op.Delete(it) },
+            move = { op = Op.Move(listOf(it)) },
+            delete = { op = Op.Delete(listOf(it)) },
+            copyTo = { op = Op.Copy(listOf(it)) },
+            history = { op = Op.History(it) },
+            canHistory = { app.router.versioning(it) != null },
+            compress = { op = Op.Compress(listOf(it)) },
+            extract = { op = Op.Extract(it) },
+            saveToDevice = { saveToDownloads(listOf(it)) },
             canShareWith = { app.router.sharing()?.canShare(it) == true },
-            shareWith = { op = Op.ShareWith(it) },
+            shareWith = { op = Op.ShareWith(listOf(it)) },
             canStopSharing = { app.router.sharing()?.canUnshare(it) == true },
             stopSharing = { op = Op.StopSharing(it) },
         )
@@ -89,6 +108,8 @@ fun AppRoot(app: FilesApp) {
     val showBar = route in tabs.map { it.route }
     // An Undo snackbar belongs to the screen it was raised on.
     LaunchedEffect(route) { snackbar.currentSnackbarData?.dismiss() }
+    // Folder-to-folder navigation keeps the same route string, so key on the back-stack entry itself.
+    LaunchedEffect(backEntry?.id) { selection.clear() }
 
     if (session == FilenSession.State.Unknown) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
@@ -122,7 +143,8 @@ fun AppRoot(app: FilesApp) {
             }
         } },
     ) { pad ->
-        NavHost(nav, start, Modifier.padding(pad)) {
+        Box(Modifier.padding(pad)) {
+        NavHost(nav, start) {
             composable("login") { LoginScreen(env) }
             composable("home") { HomeScreen(env) }
             composable("files") { FilesScreen(env) }
@@ -130,12 +152,33 @@ fun AppRoot(app: FilesApp) {
             composable("favorites") { FavoritesScreen(env) }
             composable("search") { SearchScreen(env) }
             composable("trash") { TrashScreen(env) }
+            composable("settings") { SettingsScreen(env) }
             composable("folder/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
                 FolderScreen(env, ItemId(it.arguments!!.getString("id")!!))
             }
             composable("viewer/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
                 ViewerScreen(env, ItemId(it.arguments!!.getString("id")!!))
             }
+        }
+        // Registered after the NavHost on purpose: the most recently registered handler gets Back first.
+        androidx.activity.compose.BackHandler(selection.active) { selection.clear() }
+        if (selection.active) SelectionBar(env, Modifier.align(Alignment.TopStart)) { kind, items ->
+            selection.clear()
+            when (kind) {
+                Batch.COPY -> op = Op.Copy(items)
+                Batch.MOVE -> op = Op.Move(items)
+                Batch.DELETE -> op = Op.Delete(items)
+                Batch.SHARE_WITH -> op = Op.ShareWith(items)
+                Batch.STAR -> scope.launch {
+                    val star = !items.all { app.isStarred(it.id) }
+                    val failed = items.count { runCatching { app.setStarred(it, star) }.isFailure }
+                    snackbar.showSnackbar(if (failed > 0) "Couldn't update $failed of ${items.size} favorites"
+                        else if (star) "Added ${itemsLabel(items)} to favorites" else "Removed ${itemsLabel(items)} from favorites")
+                }
+                Batch.SAVE -> saveToDownloads(items)
+                Batch.COMPRESS -> op = Op.Compress(items)
+            }
+        }
         }
         OperationHost(env, op) { op = null }
     }

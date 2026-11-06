@@ -3,7 +3,15 @@ package app.filenfiles.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import app.filenfiles.StorageStyle
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -159,6 +167,7 @@ fun HomeScreen(env: AppEnv) {
     Column(Modifier.fillMaxSize()) {
         AppBar("Filen Files", actions = {
             IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
+            IconButton({ env.nav.navigate("settings") }) { Icon(Icons.Filled.Settings, "Settings") }
             AccountAction(env)
         })
         LazyColumn(Modifier.fillMaxSize()) {
@@ -174,6 +183,19 @@ fun HomeScreen(env: AppEnv) {
                 }
             }
             if (!hasFiles) item { AllFilesBanner(env) }
+            env.app.prefs.updateVersion?.takeIf { it != env.app.prefs.dismissedUpdate }?.let { v ->
+                item {
+                    val ctx = LocalContext.current
+                    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.SystemUpdate, null); Spacer(Modifier.width(12.dp))
+                            Text("Version $v is available", Modifier.weight(1f))
+                            TextButton({ runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(env.app.prefs.updateUrl ?: app.filenfiles.UpdateChecker.RELEASES_PAGE))) } }) { Text("Download") }
+                            IconButton({ env.app.prefs.dismissUpdate(v) }) { Icon(Icons.Filled.Close, "Dismiss") }
+                        }
+                    }
+                }
+            }
             if (!signedIn) item {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clickable { env.nav.navigate("login") }) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -181,14 +203,25 @@ fun HomeScreen(env: AppEnv) {
                     }
                 }
             }
-            item { SectionTitle("Storage") }
+            item {
+                val style = env.app.prefs.storageStyle
+                Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { SectionTitle("Storage") }
+                    IconButton({ env.app.prefs.cycleStorageStyle() }, Modifier.size(40.dp)) {
+                        // Shows the layout that tapping switches TO, described for accessibility.
+                        val next = StorageStyle.entries[(style.ordinal + 1) % StorageStyle.entries.size]
+                        Icon(when (style) {
+                            StorageStyle.CARDS -> Icons.Filled.ViewAgenda
+                            StorageStyle.COMPACT -> Icons.Filled.Apps
+                            StorageStyle.ICONS -> Icons.Filled.TextFields
+                            StorageStyle.TEXT -> Icons.Filled.GridView
+                        }, "Storage layout: ${style.label}. Tap for ${next.label}", Modifier.size(20.dp))
+                    }
+                }
+            }
             item {
                 when (val r = roots) {
-                    // Wrap rather than scroll sideways: every storage stays visible instead of being cut at the edge.
-                    is Load.Ok -> @OptIn(ExperimentalLayoutApi::class) FlowRow(
-                        Modifier.padding(horizontal = 12.dp), maxItemsInEachRow = 3,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) { r.value.forEach { f -> key(f.id.value) { ShortcutCard(f, Modifier.weight(1f)) { env.nav.navigate(folderRoute(f.id)) } } } }
+                    is Load.Ok -> StorageShortcuts(env.app.prefs.storageStyle, r.value) { env.nav.navigate(folderRoute(it.id)) }
                     else -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
                 }
             }
@@ -213,9 +246,47 @@ fun HomeScreen(env: AppEnv) {
 }
 
 @Composable
-private fun SectionTitle(t: String) =
+fun SectionTitle(t: String) =
     Text(t, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
+
+/** The storage entry points, wrapped (never scrolled sideways) in the chosen density. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun StorageShortcuts(style: StorageStyle, folders: List<Folder>, onOpen: (Folder) -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    FlowRow(
+        Modifier.padding(horizontal = 12.dp),
+        maxItemsInEachRow = if (style == StorageStyle.CARDS) 3 else Int.MAX_VALUE,
+        horizontalArrangement = Arrangement.spacedBy(if (style == StorageStyle.ICONS) 4.dp else 8.dp),
+        verticalArrangement = Arrangement.spacedBy(if (style == StorageStyle.CARDS) 8.dp else 4.dp),
+    ) {
+        folders.forEach { f ->
+            key(f.id.value) {
+                when (style) {
+                    StorageStyle.CARDS -> ShortcutCard(f, Modifier.weight(1f)) { onOpen(f) }
+                    StorageStyle.COMPACT -> AssistChip(
+                        { onOpen(f) }, { Text(f.name, maxLines = 1) },
+                        leadingIcon = { Icon(rootIcon(f), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) },
+                    )
+                    StorageStyle.TEXT -> AssistChip({ onOpen(f) }, { Text(f.name, maxLines = 1) })
+                    StorageStyle.ICONS -> Box(
+                        Modifier.size(48.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                            .semantics { contentDescription = f.name }
+                            // No label is drawn, so a long press names it.
+                            .combinedClickable(onClick = { onOpen(f) }, onLongClick = {
+                                android.widget.Toast.makeText(ctx, f.name, android.widget.Toast.LENGTH_SHORT).show()
+                            }),
+                        Alignment.Center,
+                    ) { Icon(rootIcon(f), null, tint = MaterialTheme.colorScheme.onSecondaryContainer) }
+                }
+            }
+        }
+        // Keep a short last row of large cards at the same width as the others.
+        if (style == StorageStyle.CARDS) repeat((3 - folders.size % 3) % 3) { Spacer(Modifier.weight(1f)) }
+    }
+}
 
 @Composable
 private fun ShortcutCard(f: Folder, modifier: Modifier = Modifier, onClick: () -> Unit) {

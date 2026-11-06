@@ -29,23 +29,13 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
   `local:` local paths. Never mix these namespaces; received shares are read-only in the UI.
 - Newer AndroidX/Coil need compileSdk 37 (installed); targetSdk stays 36.
 
-## Device testing (Pixel 4a, Android 13, arm64) — user-provided test phone
-- `adb` = `$ANDROID_HOME/platform-tools/adb` (after `source env.sh`). The phone is signed in to the user's REAL Filen
-  account: **privacy rules apply** (don't open personal-looking files, don't paste emails/filenames in reports, keep
-  screenshots in the scratchpad and delete them; never sign out). Use cheaper subagents (haiku/sonnet) for device runs.
-- Debug-only seeding hook `DebugUploadReceiver` (shell-only) uploads a local dir into a new Drive folder; see README.
-- A Drive folder "Filen Files test (safe to delete)" holds test files (png/pdf/txt/subfolder) in the user's account.
-- `FilenPerf` logcat tag logs SDK call timings; `FilenDebug` is the seeding hook.
-
 ## Verified on device
 Sign-in + session restore; Drive and received-share browsing, badges, lock icon; favorites; search (local+Filen+shared);
 download/decrypt/open for Filen and received-share files (image/PDF built-in, others Open With); new folder/upload
 only offered in personal folders; local storage browsing and viewers.
 
 ## Also verified (rename/move/delete)
-Local rename/move/delete (+cancel), Filen rename/move/trash/undo, no write entries on received shares. Two test folders
-were left in the user's Filen account: "Filen Files test (safe to delete)" (still in the Drive) and
-"Filen Files ops (safe to delete)" (in Filen trash).
+Local rename/move/delete (+cancel), Filen rename/move/trash/undo, no write entries on received shares.
 
 ## Reliability layer (large files, interrupted transfers, network, expiry, temp files)
 - **Errors** (`filen/Errors.kt`): `failureKind()` classifies any throwable → AUTH / NETWORK / DISK_FULL / QUOTA / OTHER
@@ -53,7 +43,7 @@ were left in the user's Filen account: "Filen Files test (safe to delete)" (stil
   idempotent calls (listDir, downloads) 3× with 1 s/2 s backoff. Uploads are NOT blindly retried (see below).
 - **Session expiry**: every SDK failure in `FilenStorageProvider` goes through `io{}` → `session.noteError()`. An
   UNAUTHENTICATED error moves state to `State.Expired(email)`, drops the dead client + stored session, wipes decrypted
-  caches; `AppRoot` navigates to the login screen (email prefilled, "session expired" notice). Not testable on the real
+  caches; `AppRoot` navigates to the login screen (email prefilled, "session expired" notice). Not testable on a live
   account without invalidating it — only code-reviewed, unit-less. Network errors never expire the session.
 - **Downloads** (`materialize`): free-space check first, `.part` file restarted per attempt (SDK has no resume), size
   verified before the rename so a truncated file is never cached, `.part` removed in `finally` (failure/cancel).
@@ -105,7 +95,7 @@ were left in the user's Filen account: "Filen Files test (safe to delete)" (stil
   can lag a just-created item, same as the trash screen); cold folder listings take 3-8 s.
 
 ## Not verified
-Writable received shares; outgoing shares (test account has none); session-expiry flow (can't invalidate the real
+Writable received shares; outgoing shares ; session-expiry flow (can't invalidate a live
 account); Empty trash on a populated trash.
 
 ## Roadmap (in order)
@@ -123,7 +113,7 @@ account); Empty trash on a populated trash.
    packaging or a provider written against `filen-sdk-rs`.
 4. ~~Trash screen~~ — DONE and device-tested (`TrashStorage` in :core, `TrashScreen.kt`, entry = "Trash" row under
    Files > Filen; restore / delete forever / empty with confirmations). The server's trash listing lags behind
-   restore/delete, so handled rows are hidden locally. Empty-trash confirm was deliberately NOT exercised on the real
+   restore/delete, so handled rows are hidden locally. Empty-trash confirm was deliberately NOT exercised on a live
    account. Remaining: server-side favorites write-back (`setFavorite`), outgoing-share management. Deferred (not needed): x86_64 build for emulators.
 5. ~~Search-index crawl~~ — DONE (device results below). The index is persisted (`SearchIndexStore`, `cache/index/search.idx`,
    account-bound, wiped with the other decrypted caches and by `FilenStorageProvider.onSessionEnded()`), loaded lazily, and
@@ -143,7 +133,7 @@ account); Empty trash on a populated trash.
    cancel while queued) and keeps resolved paths in memory. Still needs a release-build jank measurement.
 8. UX: Home storage shortcuts wrap (FlowRow) instead of scrolling off the edge; folder screens show the last in-memory
    listing instantly (`FilesApp.listingCache`, LRU 48, cleared on sign-out) while the fresh one loads.
-Device-tested (Pixel 4a): persisted index (cold crawl once ≈2.5 min, dominated by ~58 shared listings, `index.personalRecursive` <1 s;
+Device-tested: persisted index (cold crawl once ≈2.5 min, dominated by ~58 shared listings, `index.personalRecursive` <1 s;
 warm start loads the snapshot, 0% CPU, no crawl; in-place patching after rename/trash/restore survives restart; nested shared
 folders open cold with no error), server-side favorites (file + folder star/unstar persist across restart, not stored in local
 prefs), listing cache, Home 3-per-row shortcuts. Scroll jank, release build, cold local Camera folder (~50 images): list
@@ -151,7 +141,7 @@ prefs), listing cache, Home 3-per-row shortcuts. Scroll jank, release build, col
 (single runs, noisy; cold 12 MP JPEG decode is the remaining cost). Filen thumbnail scrolling was NOT measurable: the test
 account has no large image folder. Unit tests: `./gradlew :filen:testDebugUnitTest` (SearchIndexStore round-trip/corruption).
 Release builds need `-x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease` offline.
-9. ~~Outgoing shares~~ — DONE and device-tested with the user's real contact (test items only, revoked afterwards).
+9. ~~Outgoing shares~~ — DONE and device-tested with a real contact (test items only, revoked afterwards).
    `SharingStorage` (core) / Filen provider: item menu "Share with a Filen contact…" (personal items; contact picker from
    `getContacts`, confirm dialog; "Add a contact by email" sends a contact request — NOT exercised on device) and
    "Stop sharing…" on top-level items in Shared by me (revokes every recipient via `removeSharedItem`). The SDK returns one
@@ -161,3 +151,44 @@ Release builds need `-x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lin
    single recipient, per-share write access, public links.
 
 _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start = one ~40 s index burst then idle; search OK._
+
+## Done since the sharing work (all device-tested)
+- **Persistent transfer queue** (`TransferManager`): jobs persist in `files/transfers.json`, survive a killed process (the foreground
+  service is START_STICKY, the app re-queues on sign-in), a restarted upload checks for a duplicate first. Kinds: UPLOAD, COPY,
+  ZIP, UNZIP. Cancelled/finished jobs are not persisted; sign-out clears everything.
+- **Save to device / copy / move across storages** (`CopyRunner`): files and whole folders between Filen, received shares and the
+  device; name clashes become "name (1)"; a resumed copy skips what already arrived; a move deletes the original only after a
+  complete copy. Destination picker = `FolderPickerDialog`.
+- **Multi-select + batch actions** (`Selection`, `SelectionBar`): long-press, tap to toggle, Back/navigation clears.
+  Copy/Move/Delete (one Undo for the batch), favorites, compress, save to device, share with a contact.
+- **Code shrinking (R8)** with keep rules in `app/proguard-rules.pro` (UniFFI/JNA bridge, JNI TLS init, Tink, WorkManager/Room).
+  Release APK 51.6 -> ~39 MB. Any new reflection-based dependency needs a smoke launch of a *release* build.
+- **Home storage layout toggle** (cards / icons+text / icons / text), persisted.
+- **Zip / unzip** (`ArchiveRunner`): works on any storage; extraction rejects unsafe paths (zip slip); a zip that already has one
+  top-level folder is not wrapped twice. Password-protected archives are not supported.
+- **File version history** (`VersionStorage`): lists earlier versions with restore/delete; the dialog explains when the account has
+  versioning switched off and offers to turn it on (confirmation). On the test account versioning is off, so restore/delete of a
+  real earlier version has NOT been exercised on a device.
+- **Camera backup** (`backup/CameraBackup`, WorkManager): periodic (30 min) + "Back up now"; Wi-Fi only / charging / videos /
+  screenshots options; only photos taken after switch-on by default; per-month folders; dedupes by name+size and remembers
+  uploaded files; stops and clears on sign-out. Needs All files access.
+- **Settings screen**, **app lock** (BiometricPrompt, fingerprint/face with screen-lock fallback; also blocks the documents provider
+  while locked), **hide contents in recent apps** (FLAG_SECURE, verified), **update check** (GitHub latest release, daily,
+  switchable, notice on Home; never installs anything). The app-lock *unlock* path was not automated (needs the phone PIN):
+  turning it on shows the system prompt as expected; verify enabling + unlocking by hand.
+- **License** AGPL-3.0-or-later (forced by the AGPL Filen SDK), `NOTICE.md`, **CI** (`.github/workflows/build.yml`, builds the
+  Rust SDK + runs unit tests + debug APK; not yet run on GitHub), unit tests in `:core` and `:filen`.
+
+## Ideas not done yet
+Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
+x86_64 build, camera backup content-trigger (instead of the 30-minute poll).
+
+## Release signing key (never in git)
+Releases are signed with a private key kept outside the repository and backed up by the maintainer (see README, "Releasing").
+Never commit it; `*.jks` / `keystore.properties` are gitignored. Machine-specific locations and test-device notes live in the
+maintainer's private notes file (`docs/PRIVATE_NOTES.md`, gitignored, not published).
+
+## Device testing
+Done on a physical Android 13 arm64 phone with a live Filen account. Use cheaper subagents for device runs; follow the
+privacy rules in the private notes if present (don't open personal files, no addresses/filenames in reports, never sign out).
+The debug-only `DebugUploadReceiver` seeds a Drive folder from a local dir (see README); logcat tags: `FilenPerf`, `FilenDebug`.
