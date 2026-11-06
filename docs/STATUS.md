@@ -198,7 +198,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   a fresh-folder retest. `FilenSaf` logcat lines record each upload. Drive reports size 0 right after a write, so the post-upload size
   check only fires for non-zero mismatches.
 
-- **Documents-provider uploads from other apps** (requested by the Stack session; unit-tested, NOT yet device-tested): if
+- **Documents-provider uploads from other apps** (requested by the Stack session; device-tested on the 4a by both sessions: cold background start -> WorkManager fallback, offline listing, process kill with a queued upload, recovery, 60 MB file): if
   `startForegroundService` is refused (provider process started in the background) `TransferManager.startService()` logs a
   `FilenDebug` line and enqueues `TransferResumeWorker` (expedited WorkManager job, `RUN_AS_NON_EXPEDITED_WORK_REQUEST`) that runs
   `transfers.resume()` until the queue is empty; `resume()` at process start does the same for persisted transfers. Provider rows
