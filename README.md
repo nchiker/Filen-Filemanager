@@ -67,6 +67,23 @@ Two upstream-integration details worth knowing:
    `AnyFile.File(val v1: File)` that shadow the top-level type and don't compile.
    `tools/patch_uniffi_kotlin.py` fully qualifies those references; `build-rust.sh` runs it automatically.
 
+## Other apps and Filen (documents provider)
+
+Filen Drive and "Shared with me" appear in Android's file picker and in other apps' "save to" dialogs, so a backup app can save into Filen.
+What to expect when an app writes a file there:
+
+- The file shows up in the folder right away as an in-progress entry whose summary reads "Uploading…", "Waiting for network…" or
+  "Upload failed: <reason>". Failed entries stay until dismissed in Filen Files.
+- Uploads are kept in a persisted queue, so they survive the app being closed or restarted. If Android refuses a background
+  foreground-service (the app was started by another app in the background), an expedited WorkManager job finishes the queue;
+  unfinished uploads also resume the next time the app starts.
+- A finished upload is shown in the folder listing straight away (a short-lived receipt bridges the delay before Filen's own listing
+  shows it). While the phone is offline, listing a folder shows its last known contents plus pending uploads instead of an error.
+- To verify an upload from the writing app: list the folder; a row whose id does not start with `filen-pending:` and whose name and
+  size match is uploaded; a `filen-pending:` row is still in progress.
+- Existing Filen files are read-only through the provider. If **App lock** is on and the app is locked, other apps are refused
+  (the app opens to unlock), so unattended scheduled backups need the lock off or the app unlocked.
+
 ## Build
 
 Prerequisites (all installed per-user, nothing system-wide):
