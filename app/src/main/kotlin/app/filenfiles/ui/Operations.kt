@@ -132,13 +132,15 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
             op.items.forEach { env.app.transfers.enqueueCopy(it, dest, move = false) }
             scope.launch { env.snackbar.showSnackbar("Copying ${itemsLabel(op.items)}…") }
         }
-        is Op.Delete -> if (op.items.any { it.origin == Origin.LOCAL }) {
+        is Op.Delete -> if (op.items.any { it.origin == Origin.LOCAL || it.origin == Origin.EXTERNAL }) {
             // Local deletion is permanent, so ask first.
             AlertDialog(
                 onDismissRequest = onClose,
                 title = { Text("Delete ${itemsLabel(op.items)}?") },
                 text = {
-                    Text(if (op.items.size == 1) {
+                    Text(if (op.items.all { it.origin == Origin.EXTERNAL }) {
+                        "${if (op.items.size == 1) "It is" else "They are"} deleted from that cloud storage. Whether ${if (op.items.size == 1) "it" else "they"} can be restored depends on the service (many keep deleted files in their own trash for a while)."
+                    } else if (op.items.size == 1) {
                         if (op.items[0].isDirectory) "The folder and everything in it will be permanently deleted." else "This file will be permanently deleted. This can't be undone."
                     } else "Items on this device are permanently deleted (folders with everything in them); Filen items go to the Filen trash.")
                 },

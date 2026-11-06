@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "FilenFiles"
-include(":app", ":core", ":filen", ":local")
+include(":app", ":core", ":filen", ":local", ":saf")

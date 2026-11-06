@@ -186,6 +186,13 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   shortest path), never lets the last copy be ticked, re-checks that at delete time. Device deletes are permanent (confirmation
   says so), Filen deletes go to the Filen trash. Device-tested incl. same-ends/different-middle decoys; 8 unit tests.
 
+- **Cloud storage through Android document providers** (`:saf` module, `SafStorageProvider`, `Origin.EXTERNAL`): "Add cloud storage…"
+  on the Files tab opens the system folder picker (Google Drive, Dropbox, OneDrive, Nextcloud...); the chosen tree is kept with a
+  persistable permission and appears as a storage (Files, Home shortcuts, destination pickers). Browse, open, thumbnails (when the
+  provider offers them), copy/move/save, zip, multi-select, rename, delete (confirmation, no undo) go through the same abstractions as
+  Filen/local. Google Docs/Sheets/Slides are virtual documents: shown as read-only exports (PDF by default). No cloud search.
+  NOT YET DEVICE-TESTED (the test phone was PIN-locked when the test was due) - run the G1-G9 plan before releasing.
+
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
 x86_64 build, camera backup content-trigger (instead of the 30-minute poll).

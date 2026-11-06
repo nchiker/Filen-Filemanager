@@ -311,6 +311,7 @@ private fun rootIcon(f: Folder) = when {
     f.origin == Origin.FILEN_PERSONAL -> Icons.Filled.Cloud
     f.origin == Origin.FILEN_SHARED_WITH_ME -> Icons.Filled.People
     f.origin == Origin.FILEN_SHARED_BY_ME -> Icons.Filled.Share
+    f.origin == Origin.EXTERNAL -> Icons.Filled.CloudQueue
     f.name == "Downloads" -> Icons.Filled.Download
     f.name == "Pictures" || f.name == "Camera" -> Icons.Filled.Image
     f.name == "Music" -> Icons.Filled.AudioFile
@@ -346,7 +347,27 @@ fun loadFavorites(env: AppEnv, signedIn: Boolean): Load<List<FileItem>> {
 fun FilesScreen(env: AppEnv) {
     val signedIn = rememberSignedIn(env)
     val hasFiles = rememberHasAllFiles(env)
-    val roots = loadState(signedIn, hasFiles) { env.app.router.roots() }
+    val roots = loadState(signedIn, hasFiles, env.app.changeCounter) { env.app.router.roots() }
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var removing by remember { mutableStateOf<Folder?>(null) }
+    // The system folder picker: the user chooses e.g. "My Drive" in the Google Drive app and grants this app access to it.
+    val pickTree = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree != null) scope.launch {
+            try { env.app.saf.addRoot(tree); env.app.notifyChanged() }
+            catch (e: CancellationException) { throw e }
+            catch (e: Throwable) { android.widget.Toast.makeText(ctx, "Couldn't add that folder: ${e.friendly()}", android.widget.Toast.LENGTH_LONG).show() }
+        }
+    }
+    removing?.let { f ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            title = { Text("Remove “${f.name}”?") },
+            text = { Text("Your files are not touched. Filen Files just stops showing this storage; you can add it again any time.") },
+            confirmButton = { TextButton({ env.app.saf.removeRoot(f.id); removing = null; env.app.notifyChanged() }) { Text("Remove") } },
+            dismissButton = { TextButton({ removing = null }) { Text("Cancel") } },
+        )
+    }
     Column(Modifier.fillMaxSize()) {
         AppBar("Files", actions = {
             IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
@@ -370,6 +391,23 @@ fun FilesScreen(env: AppEnv) {
                 item { SectionTitle("This device") }
                 if (!hasFiles) item { AllFilesBanner(env) }
                 items(all.filter { it.origin == Origin.LOCAL }, key = { it.id.value }) { RootRow(it) { env.nav.navigate(folderRoute(it.id)) } }
+                item { SectionTitle("Cloud storage") }
+                items(all.filter { it.origin == Origin.EXTERNAL }, key = { it.id.value }) { f ->
+                    ListItem(
+                        modifier = Modifier.clickable { env.nav.navigate(folderRoute(f.id)) },
+                        leadingContent = { Icon(rootIcon(f), null, tint = MaterialTheme.colorScheme.primary) },
+                        headlineContent = { Text(f.name) },
+                        trailingContent = { IconButton({ removing = f }) { Icon(Icons.Filled.Close, "Remove ${f.name}") } },
+                    )
+                }
+                item {
+                    ListItem(
+                        modifier = Modifier.clickable { pickTree.launch(null) },
+                        leadingContent = { Icon(Icons.Filled.AddCircleOutline, null, tint = MaterialTheme.colorScheme.primary) },
+                        headlineContent = { Text("Add cloud storage…") },
+                        supportingContent = { Text("Google Drive, Dropbox, OneDrive and others, through their Android apps") },
+                    )
+                }
             }
         }
     }

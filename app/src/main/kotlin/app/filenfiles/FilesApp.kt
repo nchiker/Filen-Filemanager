@@ -24,6 +24,7 @@ class FilesApp : Application() {
     lateinit var local: LocalStorageProvider; private set
     lateinit var router: StorageRouter; private set
     lateinit var filen: FilenStorageProvider; private set
+    lateinit var saf: app.filenfiles.saf.SafStorageProvider; private set
     /** Set at the end of [onCreate]; content-provider calls can arrive before that on a cold process start. */
     @Volatile var ready = false; private set
     private val warmedUp = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -129,7 +130,8 @@ class FilesApp : Application() {
         session = FilenSession(this)
         local = LocalStorageProvider(this)
         filen = FilenStorageProvider(this, session)
-        router = StorageRouter(listOf(filen, local))
+        saf = app.filenfiles.saf.SafStorageProvider(this) { f -> LocalCache.trim(this, f) }
+        router = StorageRouter(listOf(filen, local, saf))
         prefs = Prefs(this)
         appLock = AppLock(prefs)
         app.filenfiles.backup.CameraBackup.apply(this) // keep the schedule in line with the saved settings

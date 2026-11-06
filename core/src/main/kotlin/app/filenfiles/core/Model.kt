@@ -4,7 +4,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 
 /** Where an item lives. Shared namespaces are never merged into personal storage. */
-enum class Origin { LOCAL, FILEN_PERSONAL, FILEN_SHARED_WITH_ME, FILEN_SHARED_BY_ME }
+/** EXTERNAL = another app's storage reached through Android document providers (Google Drive, Dropbox, ...). */
+enum class Origin { LOCAL, FILEN_PERSONAL, FILEN_SHARED_WITH_ME, FILEN_SHARED_BY_ME, EXTERNAL }
 
 /**
  * Stable, storage-qualified identity of a file or folder, e.g. `local:/storage/emulated/0/Download`

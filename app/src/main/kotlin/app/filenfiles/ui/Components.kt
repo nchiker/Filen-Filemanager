@@ -113,6 +113,7 @@ fun OriginBadge(item: FileItem, mixed: Boolean = false) {
     val label = originLabel(item) ?: when {
         !mixed -> return
         item.origin == Origin.LOCAL -> "This device"
+        item.origin == Origin.EXTERNAL -> "Cloud"
         else -> "Filen"
     }
     val received = item.origin == Origin.FILEN_SHARED_WITH_ME
@@ -236,6 +237,7 @@ fun DetailsDialog(item: FileItem, onDismiss: () -> Unit) {
                     Origin.FILEN_PERSONAL -> "Filen (personal)"
                     Origin.FILEN_SHARED_WITH_ME -> "Filen (shared with me)"
                     Origin.FILEN_SHARED_BY_ME -> "Filen (shared by me)"
+                    Origin.EXTERNAL -> "Cloud storage"
                 })
                 row("Type", item.mime ?: if (item.isDirectory) "Folder" else null)
                 if (!item.isDirectory) row("Size", Formatter.formatFileSize(ctx, item.size))
