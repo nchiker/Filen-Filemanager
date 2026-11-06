@@ -198,6 +198,16 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   a fresh-folder retest. `FilenSaf` logcat lines record each upload. Drive reports size 0 right after a write, so the post-upload size
   check only fires for non-zero mismatches.
 
+- **Documents-provider uploads from other apps** (requested by the Stack session; unit-tested, NOT yet device-tested): if
+  `startForegroundService` is refused (provider process started in the background) `TransferManager.startService()` logs a
+  `FilenDebug` line and enqueues `TransferResumeWorker` (expedited WorkManager job, `RUN_AS_NON_EXPEDITED_WORK_REQUEST`) that runs
+  `transfers.resume()` until the queue is empty; `resume()` at process start does the same for persisted transfers. Provider rows
+  for files still on their way to Filen come from the persisted queue (so they survive a process restart, ids are
+  `filen-pending:<millis>-<n>`) and carry `COLUMN_SUMMARY` = "Uploading…" / "Waiting for network…" / "Upload failed: <reason>"
+  (FAILED rows stay listed until dismissed in the app). `RecentUploads` keeps a receipt of each finished upload for ~2 minutes, so
+  a folder listing never has a gap between the pending row disappearing and the real row showing. No provider `call()` API
+  (MANAGE_DOCUMENTS gates it). With App lock on and locked, the provider refuses other apps (AuthenticationRequiredException).
+
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
 x86_64 build, camera backup content-trigger (instead of the 30-minute poll).

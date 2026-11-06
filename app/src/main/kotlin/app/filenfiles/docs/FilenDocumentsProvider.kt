@@ -21,6 +21,8 @@ import app.filenfiles.R
 import app.filenfiles.core.FileItem
 import app.filenfiles.core.ItemId
 import app.filenfiles.core.Origin
+import app.filenfiles.core.UploadStatus
+import app.filenfiles.transfer.TransferManager
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.LocalCache
 import app.filenfiles.filen.friendlyOrNull
@@ -56,6 +58,27 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     private val pending = ConcurrentHashMap<String, Pending>()
+
+    /** A file on its way to Filen as other apps see it: still being written, queued, uploading, waiting or failed. */
+    private class PendingRow(val id: String, val parent: ItemId, val name: String, val mime: String, val size: Long, val summary: String)
+
+    /**
+     * Rows for uploads that are not finished. A file being written lives in [pending]; once the writer closed it,
+     * the persisted transfer queue is the source of truth, so the row survives a process restart and keeps its id.
+     */
+    private fun pendingRow(id: String): PendingRow? {
+        pending[id]?.takeIf { !it.closed }?.let { return PendingRow(it.id, it.parent, it.name, it.mime, it.size, UploadStatus.UPLOADING) }
+        val t = app.transfers.byDocId(id) ?: return null
+        if (!(t.active || t.state == TransferManager.State.FAILED)) return null
+        return PendingRow(id, t.parent, t.name, t.mime ?: "application/octet-stream", maxOf(t.size, t.file?.length() ?: 0L),
+            UploadStatus.summary(t.state == TransferManager.State.WAITING_NETWORK, t.state == TransferManager.State.FAILED, t.error))
+    }
+
+    private fun pendingRowsIn(parent: ItemId): List<PendingRow> =
+        (pending.values.filter { it.parent == parent && !it.closed }.mapNotNull { pendingRow(it.id) } +
+            app.transfers.providerUploads().filter { it.parent == parent }.mapNotNull { pendingRow(it.docId!!) }).distinctBy { it.id }
+
+    private fun pendingParent(id: String): String? = pending[id]?.parent?.value ?: app.transfers.byDocId(id)?.parent?.value
     private val pendingSeq = AtomicLong(1)
     /** child document id → parent document id, learned from listings; backs [isChildDocument]. */
     private val parents = ConcurrentHashMap<String, String>()
@@ -151,18 +174,24 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    private fun MatrixCursor.addPending(p: Pending) {
+    private fun MatrixCursor.addPending(p: PendingRow) {
         newRow().apply {
             add(Document.COLUMN_DOCUMENT_ID, p.id); add(Document.COLUMN_DISPLAY_NAME, p.name)
             add(Document.COLUMN_MIME_TYPE, p.mime); add(Document.COLUMN_SIZE, p.size)
             add(Document.COLUMN_LAST_MODIFIED, System.currentTimeMillis())
             add(Document.COLUMN_FLAGS, Document.FLAG_SUPPORTS_WRITE)
+            add(Document.COLUMN_SUMMARY, p.summary) // "Uploading…" / "Waiting for network…" / "Upload failed: reason"
         }
     }
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
-        pending[documentId]?.let { c.addPending(it); return c }
+        if (documentId.startsWith(PENDING_PREFIX)) {
+            val row = pendingRow(documentId)
+            if (row != null) { c.addPending(row); return c }
+            // Finished (or dismissed) meanwhile: the real file appears under its own id when the folder is listed.
+            throw FileNotFoundException("$documentId is no longer pending - list the folder to find the uploaded file")
+        }
         requireSignedIn()
         if (documentId == "filen:root" || documentId == "filen-in:root") { c.addRoot(documentId); return c }
         val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
@@ -177,7 +206,9 @@ class FilenDocumentsProvider : DocumentsProvider() {
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
         c.setNotificationUri(context!!.contentResolver, android.provider.DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId))
         listing.items.forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
-        pending.values.filter { it.parent == parent && (it.transferId < 0 || app.transfers.isPending(it.transferId)) }.forEach { c.addPending(it) }
+        // Just-finished uploads that Filen's listing doesn't show yet (it can lag a few seconds): no gap for the client.
+        app.transfers.recentUploads.missingFrom(parent, listing.items.map { it.id }).forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
+        pendingRowsIn(parent).forEach { c.addPending(it) }
         return c
     }
 
@@ -194,7 +225,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         var cur: String? = documentId
         var guard = 0
         while (cur != null && guard++ < 64) {
-            val p = parents[cur] ?: pending[cur]?.parent?.value ?: break
+            val p = parents[cur] ?: pendingParent(cur) ?: break
             if (p == parentDocumentId) return true
             cur = p
         }
@@ -211,6 +242,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
         pending[documentId]?.let { return openForWrite(it, mode) }
+        if (documentId.startsWith(PENDING_PREFIX)) throw java.lang.UnsupportedOperationException("This file was already written")
         requireSignedIn()
         if (mode != "r") throw java.lang.UnsupportedOperationException("Existing Filen files are read-only here")
         val item = io { blocking(signal) { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
@@ -241,7 +273,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
         val n = pendingSeq.getAndIncrement()
         val dir = File(LocalCache.dir(context!!, LocalCache.UPLOAD), "doc-${System.nanoTime()}-$n").apply { mkdirs() }
-        val p = Pending("filen-pending:$n", parent, displayName.replace('/', '_'), mimeType, dir)
+        // Time-based so an id handed out before a process restart can never be reused for a different file.
+        val p = Pending("$PENDING_PREFIX${System.currentTimeMillis()}-$n", parent, displayName.replace('/', '_'), mimeType, dir)
         pending[p.id] = p
         parents[p.id] = parentDocumentId
         return p.id
@@ -256,8 +289,9 @@ class FilenDocumentsProvider : DocumentsProvider() {
             file, ParcelFileDescriptor.parseMode(mode), Handler(writerThread.looper),
         ) { error ->
             if (error != null) { p.dir.deleteRecursively(); pending.remove(p.id); return@open }
-            p.closed = true
-            p.transferId = app.transfers.enqueueFile(p.parent, file, p.name, p.mime)
+            p.transferId = app.transfers.enqueueFile(p.parent, file, p.name, p.mime, docId = p.id)
+            p.closed = true // order matters: the queued transfer already shows the row, so there is never a moment without it
+            pending.remove(p.id) // from here on the persisted transfer is the source of truth for this row
             notifyParent(p.parent.value)
         }
     }
@@ -265,6 +299,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun deleteDocument(documentId: String) {
         requireSignedIn()
         pending.remove(documentId)?.let { it.dir.deleteRecursively(); return }
+        app.transfers.byDocId(documentId)?.let { t -> app.transfers.cancel(t.id); app.transfers.dismiss(t.id); notifyParent(t.parent.value); return }
         val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be deleted")
         io { blocking { w.trash(item) } } // recoverable: goes to the Filen trash
@@ -298,12 +333,13 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     companion object {
         const val AUTHORITY = "app.filenfiles.documents"
+        private const val PENDING_PREFIX = "filen-pending:"
         private val ROOT_PROJECTION = arrayOf(
             Root.COLUMN_ROOT_ID, Root.COLUMN_DOCUMENT_ID, Root.COLUMN_TITLE, Root.COLUMN_SUMMARY, Root.COLUMN_ICON, Root.COLUMN_FLAGS,
         )
         private val DOC_PROJECTION = arrayOf(
             Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,
-            Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS,
+            Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS, Document.COLUMN_SUMMARY,
         )
     }
 }

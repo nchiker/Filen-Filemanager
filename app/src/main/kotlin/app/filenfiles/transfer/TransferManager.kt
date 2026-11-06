@@ -10,6 +10,7 @@ import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import app.filenfiles.FilesApp
 import app.filenfiles.core.ItemId
+import app.filenfiles.core.RecentUploads
 import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.LocalCache
 import app.filenfiles.filen.failureKind
@@ -64,6 +65,8 @@ class TransferManager(private val app: FilesApp) {
         val move: Boolean = false,
         /** ZIP only: the items to compress ([name] is the archive's file name). UNZIP uses [source] for the archive. */
         val sources: List<ItemId> = emptyList(),
+        /** Documents-provider writes: the `filen-pending:N` id the other app was given, kept so its row survives a restart. */
+        val docId: String? = null,
     ) {
         /** Present-tense label for the panel/notification. */
         val verb: String get() = when {
@@ -160,13 +163,24 @@ class TransferManager(private val app: FilesApp) {
     }
 
     /** Queues an already-local file (written by another app through the documents provider). Takes ownership of [file]. */
-    fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?): Long {
-        val t = Transfer(ids.getAndIncrement(), name, Uri.fromFile(file), parent, mime, file.length(), file = file)
+    fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?, docId: String? = null): Long {
+        val t = Transfer(ids.getAndIncrement(), name, Uri.fromFile(file), parent, mime, file.length(), file = file, docId = docId)
         _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
         startService()
         schedule(t.id)
         return t.id
     }
+
+    /** Uploads that finished in the last couple of minutes (the Filen listing can lag behind them). */
+    val recentUploads = RecentUploads()
+
+    /** Whether anything is queued, running, or waiting for the network. */
+    val hasActive: Boolean get() = _items.value.any { it.active }
+
+    /** Documents-provider writes that are queued, running, waiting or failed (not yet dismissed), oldest first. */
+    fun providerUploads(): List<Transfer> = _items.value.filter { it.kind == Kind.UPLOAD && it.docId != null && (it.active || it.state == State.FAILED) }
+
+    fun byDocId(docId: String): Transfer? = _items.value.firstOrNull { it.docId == docId }
 
     /** True while the transfer is still pending (queued, running, waiting or failed-but-retryable). */
     fun isPending(id: Long) = find(id)?.let { it.state != State.DONE && it.state != State.CANCELLED } == true
@@ -227,7 +241,7 @@ class TransferManager(private val app: FilesApp) {
                     .put("error", t.error ?: JSONObject.NULL).put("file", t.file?.absolutePath ?: JSONObject.NULL)
                     .put("startedAt", t.startedAt).put("staged", t.staged)
                     .put("kind", t.kind.name).put("source", t.source?.value ?: JSONObject.NULL).put("move", t.move)
-                    .put("sources", JSONArray(t.sources.map { it.value })))
+                    .put("sources", JSONArray(t.sources.map { it.value })).put("docId", t.docId ?: JSONObject.NULL))
             }
             if (a.length() == 0) { storeFile.delete(); return }
             val tmp = File(storeFile.parentFile, storeFile.name + ".part")
@@ -255,6 +269,7 @@ class TransferManager(private val app: FilesApp) {
                     source = o.optString("source").takeIf { !o.isNull("source") && it.isNotEmpty() }?.let(::ItemId),
                     move = o.optBoolean("move"),
                     sources = o.optJSONArray("sources")?.let { a -> (0 until a.length()).map { ItemId(a.getString(it)) } } ?: emptyList(),
+                    docId = o.optString("docId").takeIf { !o.isNull("docId") && it.isNotEmpty() },
                 )
             }
         }.getOrNull() ?: return
@@ -298,7 +313,7 @@ class TransferManager(private val app: FilesApp) {
             val size = staged.length()
             update(id) { it.copy(size = size) }
             // Resumed after a restart: the interrupted attempt may have reached the server already.
-            if (t0.startedAt > 0 && alreadyUploaded(t0, size, t0.startedAt)) { finishOk(id); return }
+            if (t0.startedAt > 0) findUploaded(t0, size, t0.startedAt)?.let { finishOk(id, it); return }
 
             val maxAttempts = 4
             var attempt = 1
@@ -307,15 +322,15 @@ class TransferManager(private val app: FilesApp) {
                 val started = System.currentTimeMillis()
                 update(id) { it.copy(startedAt = started) }
                 try {
-                    storage.upload(t0.parent, staged.absolutePath, t0.name, t0.mime) { sent -> update(id) { it.copy(done = sent) } }
-                    finishOk(id); return
+                    val uploaded = storage.upload(t0.parent, staged.absolutePath, t0.name, t0.mime) { sent -> update(id) { it.copy(done = sent) } }
+                    finishOk(id, uploaded); return
                 } catch (e: CancellationException) { throw e
                 } catch (e: Throwable) {
                     if (e.failureKind() != FailureKind.NETWORK || attempt >= maxAttempts) { fail(id, e.friendlyOrNull() ?: e.message ?: "Upload failed"); return }
                     update(id) { it.copy(state = State.WAITING_NETWORK, error = "Waiting for network…") }
                     if (!awaitNetwork(ctx, 10 * 60_000L)) { fail(id, "No network connection. Retry when you're back online."); return }
                     // The failed attempt may have finished server-side before the connection dropped.
-                    if (alreadyUploaded(t0, size, started)) { finishOk(id); return }
+                    findUploaded(t0, size, started)?.let { finishOk(id, it); return }
                     attempt++
                 }
             }
@@ -385,7 +400,9 @@ class TransferManager(private val app: FilesApp) {
         }
     }
 
-    private fun finishOk(id: Long) {
+    private fun finishOk(id: Long, uploaded: app.filenfiles.core.FileItem? = null) {
+        // Receipt first: a provider listing between "no longer pending" and "visible in Filen" must still show the file.
+        if (uploaded != null) find(id)?.let { recentUploads.add(it.parent, uploaded) }
         update(id) { it.copy(state = State.DONE, done = it.size, error = null) }
         app.notifyChanged()
         find(id)?.let { app.docsChanged(it.parent) }
@@ -393,9 +410,9 @@ class TransferManager(private val app: FilesApp) {
 
     private fun fail(id: Long, msg: String) = update(id) { it.copy(state = State.FAILED, error = msg) }
 
-    private suspend fun alreadyUploaded(t: Transfer, size: Long, since: Long): Boolean = runCatching {
-        app.router.list(t.parent).items.any { !it.isDirectory && it.name == t.name && it.size == size && it.modified >= since - 60_000 }
-    }.getOrDefault(false)
+    private suspend fun findUploaded(t: Transfer, size: Long, since: Long): app.filenfiles.core.FileItem? = runCatching {
+        app.router.list(t.parent).items.firstOrNull { !it.isDirectory && it.name == t.name && it.size == size && it.modified >= since - 60_000 }
+    }.getOrNull()
 
     /** Suspends until a validated network is available; false after [timeoutMs]. */
     private suspend fun awaitNetwork(ctx: Context, timeoutMs: Long): Boolean {
@@ -415,8 +432,19 @@ class TransferManager(private val app: FilesApp) {
         } == true
     }
 
+    /**
+     * Keeps the process alive while work is pending. When the process was started in the background (for example by
+     * another app writing through the documents provider) Android refuses a foreground service; fall back to an
+     * expedited WorkManager job that drives the same persisted queue to the end.
+     */
     private fun startService() {
         val ctx = app.applicationContext
-        runCatching { ContextCompat.startForegroundService(ctx, Intent(ctx, TransferService::class.java)) }
+        try {
+            ContextCompat.startForegroundService(ctx, Intent(ctx, TransferService::class.java))
+        } catch (e: Throwable) {
+            val refused = e is IllegalStateException || (android.os.Build.VERSION.SDK_INT >= 31 && e is android.app.ForegroundServiceStartNotAllowedException)
+            android.util.Log.w("FilenDebug", "Foreground service start refused (${e.javaClass.simpleName}: ${e.message}); using WorkManager (refused=$refused)")
+            TransferResumeWorker.enqueue(ctx)
+        }
     }
 }
