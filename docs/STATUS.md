@@ -174,8 +174,8 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   uploaded files; stops and clears on sign-out. Needs All files access.
 - **Settings screen**, **app lock** (BiometricPrompt, fingerprint/face with screen-lock fallback; also blocks the documents provider
   while locked), **hide contents in recent apps** (FLAG_SECURE, verified), **update check** (GitHub latest release, daily,
-  switchable, notice on Home; never installs anything). The app-lock *unlock* path was not automated (needs the phone PIN):
-  turning it on shows the system prompt as expected; verify enabling + unlocking by hand.
+  switchable, notice on Home; never installs anything). The unlock path can't be automated (needs the phone PIN); the owner verified
+  enabling and unlocking by hand on their phone with 0.2.0.
 - **License** AGPL-3.0-or-later (forced by the AGPL Filen SDK), `NOTICE.md`, **CI** (`.github/workflows/build.yml`, builds the
   Rust SDK + runs unit tests + debug APK; not yet run on GitHub), unit tests in `:core` and `:filen`.
 
