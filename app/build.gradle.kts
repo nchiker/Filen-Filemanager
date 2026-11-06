@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -16,10 +18,22 @@ android {
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging { jniLibs { useLegacyPackaging = false } }
+    // Release signing key lives OUTSIDE the repo (never commit it). Override the location with FILEN_KEYSTORE_PROPS.
+    // Without it, release builds fall back to the debug key (installable for testing, not for publishing).
+    val ksProps = Properties().apply {
+        val f = file(System.getenv("FILEN_KEYSTORE_PROPS") ?: "${System.getProperty("user.home")}/.local/share/filen-release/keystore.properties")
+        if (f.isFile) f.inputStream().use { load(it) }
+    }
+    signingConfigs {
+        if (ksProps.isNotEmpty()) create("release") {
+            storeFile = file(ksProps.getProperty("storeFile")); storePassword = ksProps.getProperty("storePassword")
+            keyAlias = ksProps.getProperty("keyAlias"); keyPassword = ksProps.getProperty("keyPassword")
+        }
+    }
+    lint { checkReleaseBuilds = false } // lint's release classpath needs network access; CI/dev runs lint separately
     buildTypes {
         release {
-            // Debug-signed so the APK is installable for testing; swap in a real keystore for distribution.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
         }
     }

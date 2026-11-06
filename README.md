@@ -4,6 +4,13 @@ A native Android file manager (Kotlin, Jetpack Compose, Material 3) with [Filen]
 primary cloud provider, alongside local Android storage. The goal is a Google Files / Samsung My Files
 replacement, not just another Filen client.
 
+## Install
+
+Download the latest APK from the [Releases page](https://github.com/nchiker/Filen-Filemanager/releases/latest)
+and open it on an Android 8.0+ phone (arm64; allow installs from your browser/file manager when asked). Sign in
+to Filen, or skip for local-only, and grant **All files access**. Later releases install over the previous one
+(they are signed with the same key). The app is not on any store.
+
 ## What works
 
 - **Home** – storage shortcuts, favorites, recent files (Filen personal, received shares, local).
@@ -109,3 +116,16 @@ adb push seed /sdcard/Download/filen-seed
 adb shell "am broadcast -n app.filenfiles/.debug.DebugUploadReceiver --es dir /sdcard/Download/filen-seed --es folder 'My test folder'"
 adb logcat -s FilenDebug:V      # progress and DONE/FAILED
 ```
+
+## Publishing (maintainer)
+
+This folder lives inside a larger local repo next to unrelated projects, so it is published on its own:
+
+```bash
+tools/publish.sh     # commit first; pushes only this folder's history to GitHub main (git subtree split)
+tools/release.sh     # builds the signed release APK and attaches it to a GitHub Release (v<versionName>)
+```
+
+Bump `versionCode`/`versionName` in `app/build.gradle.kts` for every release. The release key is
+read from `~/.local/share/filen-release/keystore.properties` (override with `FILEN_KEYSTORE_PROPS`) and must never be
+committed; **back it up** - losing it means users have to uninstall before they can update.

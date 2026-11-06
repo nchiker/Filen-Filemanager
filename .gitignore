@@ -9,3 +9,5 @@ app/src/main/jniLibs/
 filen/src/main/jniLibs/
 filen/src/main/java/generated/
 *.keystore
+keystore.properties
+*.jks
