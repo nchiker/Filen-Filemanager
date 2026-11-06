@@ -191,7 +191,12 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   persistable permission and appears as a storage (Files, Home shortcuts, destination pickers). Browse, open, thumbnails (when the
   provider offers them), copy/move/save, zip, multi-select, rename, delete (confirmation, no undo) go through the same abstractions as
   Filen/local. Google Docs/Sheets/Slides are virtual documents: shown as read-only exports (PDF by default). No cloud search.
-  NOT YET DEVICE-TESTED (the test phone was PIN-locked when the test was due) - run the G1-G9 plan before releasing.
+  Device-tested against Google Drive (a throwaway folder; the picker names the root "Drive"): connect/remove/re-add, browse, copy files
+  and whole folder trees both ways (md5 identical), name clashes, rename, move, delete, zip/extract, cross-copy with Filen, permission
+  surviving a restart. Fixed on the way: a just-created cloud folder wasn't known to accept files (copy/extract of folders failed).
+  Unexplained: ONCE a first 3-file copy into a fresh cloud folder reported complete but the files never showed up; it did not recur in
+  a fresh-folder retest. `FilenSaf` logcat lines record each upload. Drive reports size 0 right after a write, so the post-upload size
+  check only fires for non-zero mismatches.
 
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,

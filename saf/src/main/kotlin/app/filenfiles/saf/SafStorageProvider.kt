@@ -246,7 +246,17 @@ class SafStorageProvider(
     override suspend fun createFolder(parent: ItemId, name: String): ItemId = withContext(Dispatchers.IO) {
         val uri = DocumentsContract.createDocument(resolver, docUri(parent), Document.MIME_TYPE_DIR, name)
             ?: throw IOException("The storage app couldn't create the folder “$name”.")
-        id(treeOf(parent), DocumentsContract.getDocumentId(uri)).also { parents[it.value] = parent.value; names[it.value] = name }
+        val docId = DocumentsContract.getDocumentId(uri)
+        val created = id(treeOf(parent), docId)
+        parents[created.value] = parent.value; names[created.value] = name
+        // Learn what the new folder allows (queryOne records the flags). Without this a copy into the folder it just
+        // created would be refused because canWrite() had never seen it.
+        val seen = runCatching { queryOne(treeOf(parent), docId) }.getOrNull()
+        if (seen == null && flags[created.value] == null) {
+            flags[created.value] = (flags[parent.value] ?: 0) or Document.FLAG_DIR_SUPPORTS_CREATE
+        }
+        android.util.Log.d("FilenSaf", "created folder, flags=${flags[created.value]}")
+        created
     }
 
     override suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FileItem =
@@ -267,6 +277,8 @@ class SafStorageProvider(
             }
             val tree = treeOf(parent)
             val item = queryOne(tree, DocumentsContract.getDocumentId(uri)) ?: throw IOException("Uploaded, but couldn't read the file back.")
+            android.util.Log.d("FilenSaf", "uploaded ${item.size} bytes (expected ${File(localPath).length()})")
+            if (item.size != 0L && item.size != File(localPath).length()) throw IOException("The storage app saved “$name” with the wrong size. Try again.")
             parents[item.id.value] = parent.value
             item
         }

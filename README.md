@@ -34,6 +34,9 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
 - **Copy, move and save to device** across Filen, shared and local storage (folders too); **zip / unzip**; **multi-select**
   with batch actions; **file version history**; **share with Filen contacts**; **trash**; an upload/copy queue that survives
   the app being killed.
+- **Cloud storage** (Google Drive, Dropbox, OneDrive, Nextcloud...) shown next to Filen and the phone, through Android's own document
+  providers - no extra accounts or keys; copy files and folders between any of them.
+- **Free up space**: find duplicate and large files on the phone or in Filen Drive.
 - **Camera backup** to a Filen folder (Wi-Fi only by default, new photos only, sorted by month).
 - **App lock**, hide contents in recent apps, and an optional update check (Settings).
 - Light/dark theme (Material You colours on Android 12+).
