@@ -225,6 +225,14 @@ fun HomeScreen(env: AppEnv) {
                     else -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
                 }
             }
+            item {
+                ListItem(
+                    modifier = Modifier.clickable { env.nav.navigate("cleanup") },
+                    leadingContent = { Icon(Icons.Filled.CleaningServices, null, tint = MaterialTheme.colorScheme.primary) },
+                    headlineContent = { Text("Free up space") },
+                    supportingContent = { Text("Find duplicate and large files") },
+                )
+            }
             val fv = (favs as? Load.Ok)?.value.orEmpty()
             if (fv.isNotEmpty()) {
                 item { SectionTitle("Favorites") }

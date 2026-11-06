@@ -171,6 +171,8 @@ class StorageRouter(private val providers: List<StorageProvider>) {
     fun versioning(item: FileItem): VersionStorage? =
         (providers.firstOrNull { it.owns(item.id) } as? VersionStorage)?.takeIf { it.canVersion(item) }
 
+    fun cleanupScopes(): List<CleanupStorage> = providers.mapNotNull { it as? CleanupStorage }
+
     fun sharing(): SharingStorage? = providers.firstNotNullOfOrNull { it as? SharingStorage }
 
     fun trashStorage(): TrashStorage? = providers.firstNotNullOfOrNull { it as? TrashStorage }

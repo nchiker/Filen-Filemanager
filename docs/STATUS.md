@@ -179,6 +179,13 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
 - **License** AGPL-3.0-or-later (forced by the AGPL Filen SDK), `NOTICE.md`, **CI** (`.github/workflows/build.yml`, builds the
   Rust SDK + runs unit tests + debug APK; not yet run on GitHub), unit tests in `:core` and `:filen`.
 
+- **Free up space** (`CleanupScreen`, `Dedupe` in :core, `CleanupStorage` on the Local and Filen providers): scans This device (skips
+  hidden folders and `Android/`) or Filen Drive and lists duplicate sets and the biggest files (>= 50 MB). Device duplicates: same size
+  -> quick SHA-256 of the first+last 64 KB -> full SHA-256; Filen duplicates use the content hash Filen stores in file metadata (no
+  download; older files without a hash are counted and skipped). Pre-selects all but one copy per set (keep oldest / newest /
+  shortest path), never lets the last copy be ticked, re-checks that at delete time. Device deletes are permanent (confirmation
+  says so), Filen deletes go to the Filen trash. Device-tested incl. same-ends/different-middle decoys; 8 unit tests.
+
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
 x86_64 build, camera backup content-trigger (instead of the 30-minute poll).

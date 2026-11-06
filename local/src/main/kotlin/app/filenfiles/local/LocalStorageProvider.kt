@@ -5,12 +5,13 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import app.filenfiles.core.*
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 /** Local Android storage via java.io.File (requires All-files access to see anything but app dirs). */
-class LocalStorageProvider(private val context: Context) : StorageProvider, WritableStorage {
+class LocalStorageProvider(private val context: Context) : StorageProvider, WritableStorage, CleanupStorage {
 
     private val internalRoot: File = Environment.getExternalStorageDirectory()
 
@@ -96,6 +97,60 @@ class LocalStorageProvider(private val context: Context) : StorageProvider, Writ
             }
         }
         out
+    }
+
+    // ---------- cleanup scan (duplicates / large files) ----------
+
+    override val label = "This device"
+
+    override suspend fun scanFiles(onProgress: (Int) -> Unit): List<ScanFile> = withContext(Dispatchers.IO) {
+        val out = ArrayList<ScanFile>()
+        val pending = java.util.ArrayDeque<File>().apply { add(internalRoot) }
+        while (pending.isNotEmpty()) {
+            ensureActive()
+            val dir = pending.removeFirst()
+            for (f in dir.listFiles() ?: continue) {
+                // Hidden entries (thumbnail caches, trash), other apps' private data and links are not ours to judge.
+                if (f.name.startsWith(".") || (dir == internalRoot && f.name == "Android")) continue
+                if (java.nio.file.Files.isSymbolicLink(f.toPath())) continue
+                if (f.isDirectory) pending.add(f)
+                else if (f.length() > 0) {
+                    out += ScanFile(toItem(f), f.relativeTo(internalRoot).path)
+                    if (out.size % 500 == 0) onProgress(out.size)
+                }
+            }
+        }
+        onProgress(out.size)
+        out
+    }
+
+    /** SHA-256 over a few KB at both ends (quick) or over everything (full). */
+    override val hasher = object : ContentHasher {
+        override suspend fun quick(item: FileItem): String? = withContext(Dispatchers.IO) {
+            runCatching {
+                val f = File(item.id.key)
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                java.io.RandomAccessFile(f, "r").use { raf ->
+                    val buf = ByteArray(64 * 1024)
+                    val n = raf.read(buf); if (n > 0) md.update(buf, 0, n)
+                    if (raf.length() > buf.size * 2L) {
+                        raf.seek(raf.length() - buf.size); val m = raf.read(buf); if (m > 0) md.update(buf, 0, m)
+                    }
+                }
+                md.digest().joinToString("") { "%02x".format(it) }
+            }.getOrNull()
+        }
+
+        override suspend fun full(item: FileItem): String? = withContext(Dispatchers.IO) {
+            runCatching {
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                File(item.id.key).inputStream().buffered(1 shl 16).use { i ->
+                    val buf = ByteArray(1 shl 16)
+                    while (true) { ensureActive(); val n = i.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+                }
+                md.digest().joinToString("") { "%02x".format(it) }
+            }.getOrNull()
+        }
     }
 
     override suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit): MaterializedFile =

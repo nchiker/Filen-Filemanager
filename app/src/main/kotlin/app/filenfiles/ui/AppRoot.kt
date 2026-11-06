@@ -153,6 +153,7 @@ fun AppRoot(app: FilesApp) {
             composable("search") { SearchScreen(env) }
             composable("trash") { TrashScreen(env) }
             composable("settings") { SettingsScreen(env) }
+            composable("cleanup") { CleanupScreen(env) }
             composable("folder/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
                 FolderScreen(env, ItemId(it.arguments!!.getString("id")!!))
             }

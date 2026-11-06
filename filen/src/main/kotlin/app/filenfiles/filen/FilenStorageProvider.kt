@@ -40,7 +40,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -262,6 +262,35 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
         out.addFirst(Crumb(ItemId("$scheme:$ROOT"), rootTitle(scheme)))
         return out
+    }
+
+    // ---------- cleanup scan (duplicates / large files) ----------
+
+    override val label = "Filen Drive"
+
+    /** Filen stores a content hash in each file's metadata, so duplicates need no downloading. Older files may lack it. */
+    override val hasher = object : ContentHasher {
+        override suspend fun quick(item: FileItem): String? = null
+        override suspend fun full(item: FileItem): String? = null
+    }
+
+    override suspend fun scanFiles(onProgress: (Int) -> Unit): List<ScanFile> = io {
+        val all = timed("cleanup.scan") { client.listDirRecursive(AnyDirWithContext.Normal(AnyNormalDir.Root(client.root())), null) }
+        val dirs = HashMap<String, Pair<String, String?>>() // uuid -> (name, parent uuid)
+        all.dirs.forEach { (it as? NonRootDir.Normal)?.v1?.let { d -> dirs[d.uuid] = dirName(d.meta) to (d.parent as? ParentUuid.Uuid)?.v1 } }
+        fun folderPath(start: String?): String {
+            val parts = ArrayList<String>(); var cur = start; var guard = 0
+            while (cur != null && guard++ < 64) { val d = dirs[cur] ?: break; parts.add(0, d.first); cur = d.second }
+            return parts.joinToString("/")
+        }
+        val out = all.files.map { f ->
+            val item = personalFileItem(f)
+            val hash = (f.meta as? FileMeta.Decoded)?.v1?.hash?.joinToString("") { "%02x".format(it) }
+            val folder = folderPath((f.parent as? ParentUuid.Uuid)?.v1)
+            ScanFile(item, if (folder.isEmpty()) item.name else "$folder/${item.name}", hash)
+        }
+        onProgress(out.size)
+        out
     }
 
     // ---------- file version history ----------
