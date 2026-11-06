@@ -9,6 +9,7 @@ import app.filenfiles.local.LocalStorageProvider
 import app.filenfiles.transfer.TransferManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +49,47 @@ class FilesApp : Application() {
         }
     }
     lateinit var transfers: TransferManager; private set
+
+    /**
+     * Last listing per folder, in memory only: re-entering a folder shows it immediately while the fresh one loads
+     * (cold Filen listings take seconds). Bounded LRU; dropped on sign-out/expiry.
+     */
+    val listingCache: MutableMap<String, app.filenfiles.core.Listing> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, app.filenfiles.core.Listing>(16, 0.75f, true) {
+            override fun removeEldestEntry(e: MutableMap.MutableEntry<String, app.filenfiles.core.Listing>) = size > 48
+        })
+
+    // ---- Filen favorites live on the server; this is the app's view of them (ids of starred personal items) ----
+    var serverFavIds by mutableStateOf<Set<String>>(emptySet()); private set
+    /** Toggles made in the last 30 s win over a (possibly lagging) server listing. */
+    private val recentFavToggles = java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Long>>()
+
+    /** Feed in a fresh server listing of favorites; recent local toggles are layered on top. */
+    fun applyServerFavorites(ids: Set<String>) {
+        val now = System.currentTimeMillis()
+        recentFavToggles.entries.removeIf { now - it.value.second > 30_000 }
+        serverFavIds = (ids.filter { recentFavToggles[it]?.first != false } + recentFavToggles.filter { it.value.first }.keys).toSet()
+    }
+
+    fun isStarred(id: app.filenfiles.core.ItemId) = id.value in serverFavIds || prefs.isFavorite(id)
+
+    /** Stars/unstars [item] on the server when it supports that, else locally. Throws on server failure (state is rolled back). */
+    suspend fun setStarred(item: app.filenfiles.core.FileItem, star: Boolean) {
+        val server = router.favoriteStorage(item)
+        if (server == null) { prefs.setFavorite(item.id, star); notifyChanged(); return }
+        val id = item.id.value
+        val before = serverFavIds
+        recentFavToggles[id] = star to System.currentTimeMillis()
+        serverFavIds = if (star) before + id else before - id
+        try {
+            server.setFavorite(item, star)
+            prefs.setFavorite(item.id, false) // an older local star on the same item is now redundant
+            notifyChanged()
+        } catch (e: Throwable) {
+            recentFavToggles.remove(id); serverFavIds = before
+            throw e
+        }
+    }
     /** Bumped after any rename/move/delete so visible lists reload. */
     var changeCounter by mutableIntStateOf(0); private set
     fun notifyChanged() { changeCounter++ }
@@ -61,6 +103,8 @@ class FilesApp : Application() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** For user actions that must finish even if the dialog/screen that started them goes away (e.g. sharing a folder). */
+    val appScope: CoroutineScope get() = scope
     lateinit var prefs: Prefs; private set
 
     override fun onCreate() {
@@ -83,9 +127,16 @@ class FilesApp : Application() {
                     contentResolver.notifyChange(
                         android.provider.DocumentsContract.buildRootsUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY), null)
                 }
+                if (it is FilenSession.State.LoggedIn) runCatching {
+                    applyServerFavorites(filen.favorites().map { f -> f.id.value }.toSet())
+                }
                 when (it) {
                     // Decrypted copies of cloud files must not outlive the session.
-                    is FilenSession.State.LoggedOut, is FilenSession.State.Expired -> runCatching { LocalCache.wipeDecrypted(this@FilesApp) }
+                    is FilenSession.State.LoggedOut, is FilenSession.State.Expired -> runCatching {
+                        filen.onSessionEnded()
+                        serverFavIds = emptySet(); recentFavToggles.clear(); listingCache.clear()
+                        LocalCache.wipeDecrypted(this@FilesApp)
+                    }
                     else -> Unit
                 }
             }

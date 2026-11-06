@@ -10,4 +10,6 @@ dependencies {
     // UniFFI's generated Kotlin uses JNA to load the Rust library
     api("net.java.dev.jna:jna:5.19.1@aar")
     implementation("androidx.security:security-crypto:1.1.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation(kotlin("test-junit"))
 }

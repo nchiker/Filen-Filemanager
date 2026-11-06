@@ -91,7 +91,18 @@ private fun NewFolderDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
 fun FolderContent(env: AppEnv, id: ItemId, refresh: Int, showCrumbs: Boolean = true, onTitle: (String) -> Unit = {}) {
     var retry by remember { mutableIntStateOf(0) }
     val signedIn = rememberSignedIn(env)
-    val state = loadState(id.value, refresh, retry, signedIn, env.app.changeCounter) { env.app.router.list(id) }
+    // Entering a folder shows its last known listing at once; any later reload (refresh, edits) starts from a spinner.
+    var state by remember(id.value) {
+        mutableStateOf<Load<app.filenfiles.core.Listing>>(env.app.listingCache[id.value]?.let { Load.Ok(it) } ?: Load.Loading)
+    }
+    var firstLoad by remember(id.value) { mutableStateOf(true) }
+    LaunchedEffect(id.value, refresh, retry, signedIn, env.app.changeCounter) {
+        if (!firstLoad) state = Load.Loading
+        firstLoad = false
+        state = try {
+            Load.Ok(env.app.router.list(id).also { env.app.listingCache[id.value] = it })
+        } catch (e: CancellationException) { throw e } catch (e: Throwable) { Load.Fail(e.friendly()) }
+    }
     LaunchedEffect(state) { (state as? Load.Ok)?.let { onTitle(it.value.folder.name) } }
     val prefs = env.app.prefs
     LoadHost(state, onRetry = { retry++ }) { listing ->

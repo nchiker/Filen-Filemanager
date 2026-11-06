@@ -107,6 +107,30 @@ interface TrashStorage {
     suspend fun emptyTrash()
 }
 
+/** Implemented by providers that keep favorites on the server (Filen personal drive). */
+interface FavoriteStorage {
+    /** True when [item]'s favorite flag lives on the server (never for received shares or local files). */
+    fun canFavorite(item: FileItem): Boolean
+    suspend fun setFavorite(item: FileItem, favorite: Boolean)
+}
+
+/** A person items can be shared with (a Filen contact). */
+data class ContactInfo(val id: String, val email: String, val name: String?)
+
+/** Implemented by providers that can share with other users and revoke those shares (Filen). */
+interface SharingStorage {
+    /** True when [item] can be shared with a contact (personal drive items only). */
+    fun canShare(item: FileItem): Boolean
+    /** True when [item] is one of my outgoing shares at the top level, so sharing can be stopped. */
+    fun canUnshare(item: FileItem): Boolean
+    suspend fun contacts(): List<ContactInfo>
+    suspend fun share(item: FileItem, contact: ContactInfo)
+    /** Sends a contact request; the person must accept before anything can be shared with them. */
+    suspend fun addContact(email: String)
+    /** Revokes the share for every recipient. */
+    suspend fun unshare(item: FileItem)
+}
+
 /** Combines providers, routing by [ItemId.scheme]. */
 class StorageRouter(private val providers: List<StorageProvider>) {
     fun writable(id: ItemId): WritableStorage? =
@@ -114,6 +138,11 @@ class StorageRouter(private val providers: List<StorageProvider>) {
 
     fun modifier(item: FileItem): WritableStorage? =
         (providers.firstOrNull { it.owns(item.id) } as? WritableStorage)?.takeIf { it.canModify(item) }
+
+    fun favoriteStorage(item: FileItem): FavoriteStorage? =
+        (providers.firstOrNull { it.owns(item.id) } as? FavoriteStorage)?.takeIf { it.canFavorite(item) }
+
+    fun sharing(): SharingStorage? = providers.firstNotNullOfOrNull { it as? SharingStorage }
 
     fun trashStorage(): TrashStorage? = providers.firstNotNullOfOrNull { it as? TrashStorage }
 

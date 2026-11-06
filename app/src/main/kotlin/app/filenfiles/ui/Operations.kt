@@ -24,6 +24,8 @@ sealed interface Op {
     data class Rename(override val item: FileItem) : Op
     data class Move(override val item: FileItem) : Op
     data class Delete(override val item: FileItem) : Op
+    data class ShareWith(override val item: FileItem) : Op
+    data class StopSharing(override val item: FileItem) : Op
 }
 
 /** Hosts the dialogs and execution of rename / move / delete on a single item. */
@@ -40,6 +42,24 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
     }
     when (op) {
         null -> Unit
+        is Op.ShareWith -> ShareDialog(env, op.item, onClose)
+        is Op.StopSharing -> AlertDialog(
+            onDismissRequest = onClose,
+            title = { Text("Stop sharing “${op.item.name}”?") },
+            text = {
+                Text("It will disappear from " + (op.item.sharedWith ?: "the people you shared it with") +
+                    ". Your own copy is not affected.")
+            },
+            confirmButton = {
+                TextButton({
+                    run("Couldn't stop sharing") {
+                        env.app.router.sharing()!!.unshare(op.item)
+                        scope.launch { env.snackbar.showSnackbar("Stopped sharing “${op.item.name}”") }
+                    }
+                }) { Text("Stop sharing") }
+            },
+            dismissButton = { TextButton(onClose) { Text("Cancel") } },
+        )
         is Op.Rename -> RenameDialog(op.item, onClose) { name ->
             run("Rename failed") {
                 env.app.router.modifier(op.item)!!.rename(op.item, name)
@@ -134,5 +154,82 @@ private fun MoveDialog(env: AppEnv, item: FileItem, onDismiss: () -> Unit, onPic
         },
         confirmButton = { TextButton({ onPick(current) }, enabled = state is Load.Ok && writable?.canWrite(current) == true) { Text("Move here") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Pick a Filen contact to share [item] with; a contact request can be sent to someone who isn't one yet. */
+@Composable
+private fun ShareDialog(env: AppEnv, item: FileItem, onClose: () -> Unit) {
+    val sharing = env.app.router.sharing()
+    val scope = rememberCoroutineScope()
+    var reload by remember { mutableIntStateOf(0) }
+    val contacts = loadState(refresh = reload) { sharing?.contacts() ?: error("Sign in to Filen to share") }
+    var chosen by remember { mutableStateOf<app.filenfiles.core.ContactInfo?>(null) }
+    var email by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    fun report(msg: String) { scope.launch { env.snackbar.showSnackbar(msg) } }
+
+    val pick = chosen
+    if (pick != null) {
+        AlertDialog(
+            onDismissRequest = { chosen = null },
+            title = { Text("Share “${item.name}”?") },
+            text = {
+                Text((if (pick.name != null) "${pick.name} (${pick.email})" else pick.email) + " will get " +
+                    (if (item.isDirectory) "access to this folder and everything inside it" else "a copy of access to this file") +
+                    ". You can stop sharing later from Shared by me.")
+            },
+            confirmButton = {
+                TextButton({
+                    chosen = null; onClose()
+                    // App scope: this dialog leaves composition right now, which would cancel a screen-scoped launch
+                    // (a folder share takes a while and was being cancelled midway).
+                    env.app.appScope.launch {
+                        try { sharing!!.share(item, pick); env.app.notifyChanged(); env.snackbar.showSnackbar("Shared “${item.name}” with ${pick.name ?: pick.email}") }
+                        catch (e: CancellationException) { throw e }
+                        catch (e: Throwable) { env.snackbar.showSnackbar("Couldn't share: ${e.friendly()}") }
+                    }
+                }) { Text("Share") }
+            },
+            dismissButton = { TextButton({ chosen = null }) { Text("Back") } },
+        )
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Share “${item.name}”", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp)) {
+                when (val c = contacts) {
+                    Load.Loading -> Box(Modifier.fillMaxWidth().height(80.dp), Alignment.Center) { CircularProgressIndicator() }
+                    is Load.Fail -> Text(c.message, color = MaterialTheme.colorScheme.error)
+                    is Load.Ok -> if (c.value.isEmpty()) {
+                        Text("You have no Filen contacts yet. Send a request below; once they accept, they will appear here.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else LazyColumn(Modifier.weight(1f, fill = false)) {
+                        items(c.value, key = { it.id }) { p ->
+                            ListItem(
+                                modifier = Modifier.clickable { chosen = p },
+                                headlineContent = { Text(p.name ?: p.email, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                supportingContent = if (p.name != null) ({ Text(p.email, maxLines = 1, overflow = TextOverflow.Ellipsis) }) else null,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                OutlinedTextField(email, { email = it }, singleLine = true, label = { Text("Add a contact by email") },
+                    modifier = Modifier.fillMaxWidth())
+                TextButton({
+                    val addr = email.trim(); busy = true
+                    scope.launch {
+                        try { sharing!!.addContact(addr); email = ""; report("Contact request sent to $addr"); reload++ }
+                        catch (e: CancellationException) { throw e }
+                        catch (e: Throwable) { report("Couldn't send request: ${e.friendly()}") }
+                        finally { busy = false }
+                    }
+                }, enabled = !busy && android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) { Text("Send contact request") }
+            }
+        },
+        confirmButton = { TextButton(onClose) { Text("Close") } },
     )
 }

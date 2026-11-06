@@ -33,6 +33,11 @@ class Prefs(context: Context) {
         sp.edit().putString("favorites", JSONArray(favorites.toList()).toString()).apply()
     }
 
+    fun setFavorite(id: ItemId, on: Boolean) {
+        if ((id.value in favorites) == on) return
+        toggleFavorite(id)
+    }
+
     private fun loadFavorites(): Set<String> {
         val raw = sp.getString("favorites", null) ?: return emptySet()
         val a = JSONArray(raw)

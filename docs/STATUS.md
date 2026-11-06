@@ -125,8 +125,39 @@ account); Empty trash on a populated trash.
    Files > Filen; restore / delete forever / empty with confirmations). The server's trash listing lags behind
    restore/delete, so handled rows are hidden locally. Empty-trash confirm was deliberately NOT exercised on the real
    account. Remaining: server-side favorites write-back (`setFavorite`), outgoing-share management. Deferred (not needed): x86_64 build for emulators.
-5. Search-index crawl: ~3.3 CPU-minutes (8 cores saturated for ~40 s) once per app start with the UI open — battery
-   heavy. Ideas: persist the index on disk and refresh incrementally, lower SDK concurrency, only crawl on Wi-Fi/charging.
-6. Known UX nits: storage shortcut row cut at right edge on Home; large shared folders take 3–12 s (SDK time).
+5. ~~Search-index crawl~~ — DONE (device results below). The index is persisted (`SearchIndexStore`, `cache/index/search.idx`,
+   account-bound, wiped with the other decrypted caches and by `FilenStorageProvider.onSessionEnded()`), loaded lazily, and
+   patched in place by our own upload/new-folder/rename/move/trash/restore (entries carry their parent id so a trashed folder
+   drops its subtree; restoring a folder marks the index dirty because its subtree returns). A full re-crawl runs only when
+   missing, dirty, or past TTL (personal 6 h, shared 24 h); TTL-only refreshes are skipped on metered networks / battery
+   saver. Searches answer from the existing index immediately and only wait (≤5 s) when there is none. A failed crawl keeps
+   the previous index. The SDK has no change feed, so refreshes are still full crawls.
+   Parent ids of shared items are persisted too → `resolveShared()` re-lists the path down to a nested received-share folder
+   after a process restart (fixes the old "reopen from the Shared tab" limitation, also for the DocumentsProvider).
+6. ~~Server-side favorites~~ — DONE. `FavoriteStorage` (core) implemented by the Filen provider via SDK `setFavorite`
+   (personal items only; received shares and local files keep the local Prefs star). `FilesApp.serverFavIds` is the app's
+   view (filled from `listFavorites` on sign-in and when the Favorites list loads); toggles apply optimistically, are rolled
+   back with a toast on failure, and win over a lagging server listing for 30 s. Legacy local stars on Filen items still
+   show and are cleared when toggled. No automatic migration of old local stars to the server.
+7. Thumbnail jank mitigation: `ItemThumb` now requests Filen thumbnails through a 3-permit semaphore (cells that scroll away
+   cancel while queued) and keeps resolved paths in memory. Still needs a release-build jank measurement.
+8. UX: Home storage shortcuts wrap (FlowRow) instead of scrolling off the edge; folder screens show the last in-memory
+   listing instantly (`FilesApp.listingCache`, LRU 48, cleared on sign-out) while the fresh one loads.
+Device-tested (Pixel 4a): persisted index (cold crawl once ≈2.5 min, dominated by ~58 shared listings, `index.personalRecursive` <1 s;
+warm start loads the snapshot, 0% CPU, no crawl; in-place patching after rename/trash/restore survives restart; nested shared
+folders open cold with no error), server-side favorites (file + folder star/unstar persist across restart, not stored in local
+prefs), listing cache, Home 3-per-row shortcuts. Scroll jank, release build, cold local Camera folder (~50 images): list
+17.8% → 9.8% janky frames after swapping `SubcomposeAsyncImage` for `AsyncImage`; grid measured 6.1% before / 11.8% after
+(single runs, noisy; cold 12 MP JPEG decode is the remaining cost). Filen thumbnail scrolling was NOT measurable: the test
+account has no large image folder. Unit tests: `./gradlew :filen:testDebugUnitTest` (SearchIndexStore round-trip/corruption).
+Release builds need `-x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease` offline.
+9. ~~Outgoing shares~~ — DONE and device-tested with the user's real contact (test items only, revoked afterwards).
+   `SharingStorage` (core) / Filen provider: item menu "Share with a Filen contact…" (personal items; contact picker from
+   `getContacts`, confirm dialog; "Add a contact by email" sends a contact request — NOT exercised on device) and
+   "Stop sharing…" on top-level items in Shared by me (revokes every recipient via `removeSharedItem`). The SDK returns one
+   outgoing entry per recipient, so `listShared(OUT root)` merges them by uuid (recipients joined in `sharedWith`) and
+   keeps all underlying roots in `outRoots` for revoke. Shares run on `FilesApp.appScope`: a dialog-scoped launch was
+   cancelled when the dialog closed, which silently dropped a folder share (found on device, fixed). Not built: revoking a
+   single recipient, per-share write access, public links.
 
 _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start = one ~40 s index burst then idle; search OK._

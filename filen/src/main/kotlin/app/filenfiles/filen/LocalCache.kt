@@ -12,6 +12,8 @@ object LocalCache {
     const val OPEN = "open"
     const val THUMBS = "thumbs"
     const val UPLOAD = "upload"
+    /** Persisted search index (decrypted names): small, account-bound, wiped with the rest. */
+    const val INDEX = "index"
     private const val OPEN_CAP = 1L shl 30        // 1 GiB of opened/decrypted files
     private const val THUMB_CAP = 100L shl 20     // 100 MiB of thumbnails
     private const val MAX_AGE_MS = 7L * 24 * 3600 * 1000
@@ -32,7 +34,7 @@ object LocalCache {
     /** At process start: no transfer is running, so partial downloads and upload staging are leftovers. */
     fun sweepAtStartup(ctx: Context) {
         dir(ctx, UPLOAD).deleteRecursively()
-        for (n in listOf(OPEN, THUMBS)) dir(ctx, n).walkBottomUp().filter { it.isFile && isTemp(it) }.forEach { it.delete() }
+        for (n in listOf(OPEN, THUMBS, INDEX)) dir(ctx, n).walkBottomUp().filter { it.isFile && isTemp(it) }.forEach { it.delete() }
         trim(ctx)
     }
 
@@ -61,6 +63,6 @@ object LocalCache {
 
     /** Removes decrypted data on sign-out or session expiry. */
     fun wipeDecrypted(ctx: Context) {
-        dir(ctx, OPEN).deleteRecursively(); dir(ctx, THUMBS).deleteRecursively()
+        dir(ctx, OPEN).deleteRecursively(); dir(ctx, THUMBS).deleteRecursively(); dir(ctx, INDEX).deleteRecursively()
     }
 }

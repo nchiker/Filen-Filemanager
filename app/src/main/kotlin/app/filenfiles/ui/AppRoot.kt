@@ -64,12 +64,22 @@ fun AppRoot(app: FilesApp) {
             open = { if (it.isDirectory) nav.navigate(folderRoute(it.id)) else nav.navigate(viewerRoute(it.id)) },
             openWith = { withFile(it) { f -> OpenWith.open(ctx, f) } },
             share = { withFile(it) { f -> OpenWith.share(ctx, f) } },
-            toggleFavorite = { app.prefs.toggleFavorite(it.id) },
-            isFavorite = { app.prefs.isFavorite(it.id) },
+            toggleFavorite = { item ->
+                scope.launch {
+                    try { app.setStarred(item, !app.isStarred(item.id)) }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Throwable) { Toast.makeText(ctx, "Couldn't update favorite: " + e.friendly(), Toast.LENGTH_LONG).show() }
+                }
+            },
+            isFavorite = { app.isStarred(it.id) },
             canModify = { app.router.modifier(it) != null },
             rename = { op = Op.Rename(it) },
             move = { op = Op.Move(it) },
             delete = { op = Op.Delete(it) },
+            canShareWith = { app.router.sharing()?.canShare(it) == true },
+            shareWith = { op = Op.ShareWith(it) },
+            canStopSharing = { app.router.sharing()?.canUnshare(it) == true },
+            stopSharing = { op = Op.StopSharing(it) },
         )
     }
     val env = remember(app, nav, actions) { AppEnv(app, nav, actions, snackbar) }

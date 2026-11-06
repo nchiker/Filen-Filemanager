@@ -29,7 +29,9 @@ import app.filenfiles.core.FileItem
 import app.filenfiles.filen.friendlyOrNull
 import app.filenfiles.core.Origin
 import app.filenfiles.core.Permission
+import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.withPermit
 import uniffi.filen_sdk_rs.FilenSdkException
 
 // ---------- loading ----------
@@ -153,6 +155,10 @@ class ItemActions(
     val rename: (FileItem) -> Unit = {},
     val move: (FileItem) -> Unit = {},
     val delete: (FileItem) -> Unit = {},
+    val canShareWith: (FileItem) -> Boolean = { false },
+    val shareWith: (FileItem) -> Unit = {},
+    val canStopSharing: (FileItem) -> Boolean = { false },
+    val stopSharing: (FileItem) -> Unit = {},
 )
 
 @Composable
@@ -167,6 +173,8 @@ fun ItemMenu(item: FileItem, actions: ItemActions) {
                 DropdownMenuItem({ Text("Open with…") }, { open = false; actions.openWith(item) })
                 DropdownMenuItem({ Text("Share…") }, { open = false; actions.share(item) })
             }
+            if (actions.canShareWith(item)) DropdownMenuItem({ Text("Share with a Filen contact…") }, { open = false; actions.shareWith(item) })
+            if (actions.canStopSharing(item)) DropdownMenuItem({ Text("Stop sharing…") }, { open = false; actions.stopSharing(item) })
             val fav = actions.isFavorite(item)
             DropdownMenuItem({ Text(if (fav) "Remove from favorites" else "Add to favorites") }, { open = false; actions.toggleFavorite(item) })
             if (actions.canModify(item)) {
@@ -215,6 +223,11 @@ fun DetailsDialog(item: FileItem, onDismiss: () -> Unit) {
  * Type icon, replaced by an image thumbnail for image files once one is available
  * (local files are decoded by Coil at thumbnail size; Filen files use the SDK's thumbnailer).
  */
+private object ThumbCache {
+    val paths = java.util.concurrent.ConcurrentHashMap<String, String>()
+    val gate = kotlinx.coroutines.sync.Semaphore(3)
+}
+
 @Composable
 fun ItemThumb(item: FileItem, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
     val icon = @Composable { Icon(iconFor(item), null, tint = iconTint(item), modifier = Modifier.size(size * 0.66f)) }
@@ -223,19 +236,28 @@ fun ItemThumb(item: FileItem, size: androidx.compose.ui.unit.Dp, modifier: Modif
     }
     val ctx = LocalContext.current
     val px = with(androidx.compose.ui.platform.LocalDensity.current) { size.roundToPx() }
-    val model by produceState<Any?>(null, item.id, item.size, px) {
+    val thumbPx = maxOf(px, 128).coerceAtMost(512)
+    val key = "${item.id.value}|${item.size}|$thumbPx"
+    val model by produceState<Any?>(ThumbCache.paths[key]?.let(::File), key) {
+        if (value != null) return@produceState // already resolved while scrolling past earlier
         value = if (item.origin == Origin.LOCAL) java.io.File(item.id.key)
-        else (ctx.applicationContext as app.filenfiles.FilesApp).router
-            .let { r -> runCatching { r.thumbnail(item, maxOf(px, 128).coerceAtMost(512)) }.getOrNull() }
-            ?.let { java.io.File(it) }
+        else {
+            val router = (ctx.applicationContext as app.filenfiles.FilesApp).router
+            // A fling can bring dozens of cells on screen at once: let only a few hit the SDK at a time (cells that
+            // scroll away cancel while queued here), and remember results so scrolling back is free.
+            ThumbCache.gate.withPermit { runCatching { router.thumbnail(item, thumbPx) }.getOrNull() }
+                ?.also { ThumbCache.paths[key] = it }?.let(::File)
+        }
     }
     Box(modifier.size(size).clip(RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
+        // Plain AsyncImage (no subcomposition: that was the main UI-thread cost while flinging a cold list).
+        var loaded by remember(model) { mutableStateOf(false) }
+        if (!loaded) icon()
         val m = model
-        if (m == null) icon() else coil3.compose.SubcomposeAsyncImage(
+        if (m != null) coil3.compose.AsyncImage(
             model = coil3.request.ImageRequest.Builder(ctx).data(m).size(px).build(),
             contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-            loading = { icon() }, error = { icon() },
+            modifier = Modifier.fillMaxSize(), onSuccess = { loaded = true },
         )
     }
 }

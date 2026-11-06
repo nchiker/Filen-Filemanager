@@ -184,9 +184,11 @@ fun HomeScreen(env: AppEnv) {
             item { SectionTitle("Storage") }
             item {
                 when (val r = roots) {
-                    is Load.Ok -> LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(r.value, key = { it.id.value }) { ShortcutCard(it) { env.nav.navigate(folderRoute(it.id)) } }
-                    }
+                    // Wrap rather than scroll sideways: every storage stays visible instead of being cut at the edge.
+                    is Load.Ok -> @OptIn(ExperimentalLayoutApi::class) FlowRow(
+                        Modifier.padding(horizontal = 12.dp), maxItemsInEachRow = 3,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) { r.value.forEach { f -> key(f.id.value) { ShortcutCard(f, Modifier.weight(1f)) { env.nav.navigate(folderRoute(f.id)) } } } }
                     else -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
                 }
             }
@@ -216,12 +218,12 @@ private fun SectionTitle(t: String) =
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
 
 @Composable
-private fun ShortcutCard(f: Folder, onClick: () -> Unit) {
-    ElevatedCard(Modifier.clickable(onClick = onClick)) {
-        Column(Modifier.padding(16.dp).widthIn(min = 96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+private fun ShortcutCard(f: Folder, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    ElevatedCard(modifier.clickable(onClick = onClick)) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(rootIcon(f), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
             Spacer(Modifier.height(4.dp))
-            Text(f.name, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            Text(f.name, style = MaterialTheme.typography.labelMedium, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
@@ -249,8 +251,12 @@ fun loadFavorites(env: AppEnv, signedIn: Boolean): Load<List<FileItem>> {
     return loadState(ids, signedIn, env.app.changeCounter) {
         coroutineScope {
             val local = ids.map { id -> async { runCatching { env.app.router.stat(ItemId(id)) }.getOrNull() } }.awaitAll().filterNotNull()
-            val server = runCatching { env.app.router.serverFavorites() }.getOrDefault(emptyList())
-            (local + server).distinctBy { it.id.value }
+            val server = runCatching { env.app.router.serverFavorites() }.getOrNull()
+            // Filen's own favorites: refresh the app's view, and honour toggles the server listing hasn't caught up with.
+            if (server != null) env.app.applyServerFavorites(server.filter { it.origin == Origin.FILEN_PERSONAL }.map { it.id.value }.toSet())
+            val starred = env.app.serverFavIds
+            (local + (server ?: emptyList()).filter { it.origin != Origin.FILEN_PERSONAL || it.id.value in starred })
+                .distinctBy { it.id.value }
         }
     }
 }
