@@ -240,18 +240,19 @@ fun HomeScreen(env: AppEnv) {
             }
             item {
                 when (val r = roots) {
-                    is Load.Ok -> StorageShortcuts(env.app.prefs.storageStyle, r.value) { env.nav.navigate(folderRoute(it.id)) }
+                    is Load.Ok -> StorageShortcuts(env.app.prefs.storageStyle, r.value.map { f ->
+                        Shortcut(f.id.value, f.name, rootIcon(f)) { env.nav.navigate(folderRoute(f.id)) }
+                    })
                     else -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
                 }
             }
+            // Same component, same layout toggle as the storages above, so they always look like part of the page.
+            item { SectionTitle("Tools") }
             item {
-                // Maintenance shortcuts: small chips, so they don't push the files below them off the screen.
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip({ env.nav.navigate("cleanup") }, { Text("Free up space") },
-                        leadingIcon = { Icon(Icons.Filled.CleaningServices, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) })
-                    if (signedIn) AssistChip({ env.nav.navigate("trash") }, { Text("Trash") },
-                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) })
-                }
+                StorageShortcuts(env.app.prefs.storageStyle, listOfNotNull(
+                    Shortcut("tool:cleanup", "Free up space", Icons.Filled.CleaningServices) { env.nav.navigate("cleanup") },
+                    if (signedIn) Shortcut("tool:trash", "Trash", Icons.Filled.Delete) { env.nav.navigate("trash") } else null,
+                ))
             }
             val fv = (favs as? Load.Ok)?.value.orEmpty()
             if (fv.isNotEmpty()) {
@@ -278,10 +279,13 @@ fun SectionTitle(t: String) =
     Text(t, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
 
-/** The storage entry points, wrapped (never scrolled sideways) in the chosen density. */
+/** One tile on Home: a storage, or a tool such as Free up space. Drawn in whichever layout the user picked. */
+class Shortcut(val key: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val onClick: () -> Unit)
+
+/** The Home shortcuts, wrapped (never scrolled sideways) in the chosen density. */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun StorageShortcuts(style: StorageStyle, folders: List<Folder>, onOpen: (Folder) -> Unit) {
+private fun StorageShortcuts(style: StorageStyle, items: List<Shortcut>) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     FlowRow(
         Modifier.padding(horizontal = 12.dp),
@@ -289,41 +293,41 @@ private fun StorageShortcuts(style: StorageStyle, folders: List<Folder>, onOpen:
         horizontalArrangement = Arrangement.spacedBy(if (style == StorageStyle.ICONS) 4.dp else 8.dp),
         verticalArrangement = Arrangement.spacedBy(if (style == StorageStyle.CARDS) 8.dp else 4.dp),
     ) {
-        folders.forEach { f ->
-            key(f.id.value) {
+        items.forEach { f ->
+            key(f.key) {
                 when (style) {
-                    StorageStyle.CARDS -> ShortcutCard(f, Modifier.weight(1f)) { onOpen(f) }
+                    StorageStyle.CARDS -> ShortcutCard(f, Modifier.weight(1f))
                     StorageStyle.COMPACT -> AssistChip(
-                        { onOpen(f) }, { Text(f.name, maxLines = 1) },
-                        leadingIcon = { Icon(rootIcon(f), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) },
+                        f.onClick, { Text(f.label, maxLines = 1) },
+                        leadingIcon = { Icon(f.icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) },
                     )
-                    StorageStyle.TEXT -> AssistChip({ onOpen(f) }, { Text(f.name, maxLines = 1) })
+                    StorageStyle.TEXT -> AssistChip(f.onClick, { Text(f.label, maxLines = 1) })
                     StorageStyle.ICONS -> Box(
                         Modifier.size(48.dp).clip(androidx.compose.foundation.shape.CircleShape)
                             .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .semantics { contentDescription = f.name }
+                            .semantics { contentDescription = f.label }
                             // No label is drawn, so a long press names it.
-                            .combinedClickable(onClick = { onOpen(f) }, onLongClick = {
-                                android.widget.Toast.makeText(ctx, f.name, android.widget.Toast.LENGTH_SHORT).show()
+                            .combinedClickable(onClick = f.onClick, onLongClick = {
+                                android.widget.Toast.makeText(ctx, f.label, android.widget.Toast.LENGTH_SHORT).show()
                             }),
                         Alignment.Center,
-                    ) { Icon(rootIcon(f), null, tint = MaterialTheme.colorScheme.onSecondaryContainer) }
+                    ) { Icon(f.icon, null, tint = MaterialTheme.colorScheme.onSecondaryContainer) }
                 }
             }
         }
         // Keep a short last row of large cards at the same width as the others.
-        if (style == StorageStyle.CARDS) repeat((3 - folders.size % 3) % 3) { Spacer(Modifier.weight(1f)) }
+        if (style == StorageStyle.CARDS) repeat((3 - items.size % 3) % 3) { Spacer(Modifier.weight(1f)) }
     }
 }
 
 @Composable
-private fun ShortcutCard(f: Folder, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    OutlinedCard(modifier.clickable(onClick = onClick), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+private fun ShortcutCard(f: Shortcut, modifier: Modifier = Modifier) {
+    OutlinedCard(modifier.clickable(onClick = f.onClick), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(rootIcon(f), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            Icon(f.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
             Spacer(Modifier.height(4.dp))
-            Text(f.name, style = MaterialTheme.typography.labelMedium, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(f.label, style = MaterialTheme.typography.labelMedium, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }

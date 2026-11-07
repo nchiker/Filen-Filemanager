@@ -227,8 +227,8 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   `Op.onDone` (Delete waits 400 ms so the Undo snackbar isn't cleared by the navigation). Device-tested (copy, move, delete).
 - **Update banner fix**: the remembered "update available" answer is now dropped at startup when the installed version has caught up with it
   (it used to linger up to 24 h after installing the update). Device-verified.
-- **Follow-up polish (device-tested, local files only)**: settings button is a gear again; Home has "Free up space" / "Trash" chips instead of the big row
-  (both also under Settings > Storage); Settings > Appearance > Theme (System / Light / Dark, `Prefs.themeMode`, status-bar icon style follows it;
+- **Follow-up polish (device-tested, local files only)**: settings button is a gear again; Home has a "Tools" section ("Free up space", "Trash") drawn by the same `StorageShortcuts`/`Shortcut`
+  component as the storages, so it follows the four-way layout toggle (both also under Settings > Storage); Settings > Appearance > Theme (System / Light / Dark, `Prefs.themeMode`, status-bar icon style follows it;
   default System); round white "+" FAB in writable folders (Upload files / New folder) replaces the top-bar icons; "Add to a zip…" in the file
   menu and in the multi-select menu (`Op.AddToZip` + `ZipPickerDialog`, `TransferManager.enqueueAddItemsToZip`; sources can be any storage's files);
   cards and the search field are outlined/rounded like Stack. Still NOT exercised on the real Filen account: adding to a zip that lives on Filen
