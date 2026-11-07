@@ -134,6 +134,9 @@ class FilesApp : Application() {
         router = StorageRouter(listOf(filen, local, saf))
         prefs = Prefs(this)
         appLock = AppLock(prefs)
+        // The remembered "update available" answer is only refreshed daily: once this build has caught up with it
+        // (the user installed the update), the notice must go away immediately instead of lingering until the next check.
+        prefs.updateVersion?.let { if (!app.filenfiles.core.Versions.isNewer(it, installedVersion)) prefs.setAvailableUpdate(null, null) }
         app.filenfiles.backup.CameraBackup.apply(this) // keep the schedule in line with the saved settings
         transfers = TransferManager(this)
         // Partial downloads / upload staging from a previous run are garbage; trim caches to their caps.

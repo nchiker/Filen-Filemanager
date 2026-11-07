@@ -186,6 +186,8 @@ class ItemActions(
     val shareWith: (FileItem) -> Unit = {},
     val canStopSharing: (FileItem) -> Boolean = { false },
     val stopSharing: (FileItem) -> Unit = {},
+    /** Starts any dialog-driven operation (rename/move/copy/delete...) from a screen that has no list of its own. */
+    val run: (Op) -> Unit = {},
 )
 
 @Composable
@@ -338,12 +340,13 @@ fun FileGridCell(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
     val sel = actions.selection
     val selected = sel.isSelected(item)
     val haptic = LocalHapticFeedback.current
-    Card(
+    OutlinedCard(
         Modifier.fillMaxWidth().combinedClickable(
             onClick = { if (sel.active) sel.toggle(item) else actions.open(item) },
             onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); sel.toggle(item) },
         ),
-        colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
     ) {
         Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.fillMaxWidth()) {

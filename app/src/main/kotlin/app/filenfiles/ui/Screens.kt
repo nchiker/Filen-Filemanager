@@ -52,6 +52,8 @@ fun AppBar(title: String, actions: @Composable RowScope.() -> Unit = {}, onBack:
         title = { Text(title, maxLines = 1) },
         navigationIcon = { if (onBack != null) IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
         actions = actions,
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant, navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant),
     )
 }
 
@@ -88,16 +90,24 @@ fun rememberSignedIn(env: AppEnv): Boolean {
     return s is FilenSession.State.LoggedIn
 }
 
+/** Round account button (initial of the signed-in email); opens the sign-in/sign-out dialog. */
 @Composable
-private fun AccountAction(env: AppEnv) {
+fun AccountAction(env: AppEnv) {
     var show by remember { mutableStateOf(false) }
     val state by env.app.session.state.collectAsState()
-    IconButton({ show = true }) { Icon(Icons.Filled.AccountCircle, "Account") }
+    val email = (state as? FilenSession.State.LoggedIn)?.email
+    Box(
+        Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer)
+            .clickable { show = true }.semantics { contentDescription = "Account" },
+        Alignment.Center,
+    ) {
+        if (email != null) Text(email.first().uppercase(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+        else Icon(Icons.Filled.Person, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+    }
     if (show) AlertDialog(
         onDismissRequest = { show = false },
         title = { Text("Filen account") },
-        text = { Text((state as? FilenSession.State.LoggedIn)?.let { "Signed in as ${it.email}" }
-            ?: if (state is FilenSession.State.Expired) "Session expired" else "Not signed in") },
+        text = { Text(email?.let { "Signed in as $it" } ?: if (state is FilenSession.State.Expired) "Session expired" else "Not signed in") },
         confirmButton = {
             if (state is FilenSession.State.LoggedIn)
                 TextButton({ show = false; env.app.session.logout() }) { Text("Sign out") }
@@ -105,6 +115,30 @@ private fun AccountAction(env: AppEnv) {
         },
         dismissButton = { TextButton({ show = false }) { Text("Close") } },
     )
+}
+
+/** Stack's home header: one raised white pill - search icon, hint, settings, and the account avatar. */
+@Composable
+private fun StackSearchBar(env: AppEnv) {
+    Surface(
+        Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth().height(56.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 4.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Row(Modifier.clickable { env.nav.navigate("search") }.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(12.dp))
+            Text("Search your files", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                style = MaterialTheme.typography.titleMedium)
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { env.nav.navigate("settings") }.semantics { contentDescription = "Settings" },
+                Alignment.Center,
+            ) { Icon(Icons.Filled.Tune, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Spacer(Modifier.width(8.dp))
+            AccountAction(env)
+        }
+    }
 }
 
 // ---------- login ----------
@@ -165,23 +199,8 @@ fun HomeScreen(env: AppEnv) {
     val recents = loadState(signedIn, hasFiles, env.app.changeCounter) { env.app.router.recent(40) }
     val favs = loadFavorites(env, signedIn)
     Column(Modifier.fillMaxSize()) {
-        AppBar("Filen Files", actions = {
-            IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
-            IconButton({ env.nav.navigate("settings") }) { Icon(Icons.Filled.Settings, "Settings") }
-            AccountAction(env)
-        })
+        StackSearchBar(env)
         LazyColumn(Modifier.fillMaxSize()) {
-            item {
-                Surface(
-                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clickable { env.nav.navigate("search") },
-                    shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Search, null); Spacer(Modifier.width(12.dp))
-                        Text("Search Filen, shared and local files", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
             if (!hasFiles) item { AllFilesBanner(env) }
             env.app.prefs.updateVersion?.takeIf { it != env.app.prefs.dismissedUpdate }?.let { v ->
                 item {
@@ -298,7 +317,8 @@ private fun StorageShortcuts(style: StorageStyle, folders: List<Folder>, onOpen:
 
 @Composable
 private fun ShortcutCard(f: Folder, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    ElevatedCard(modifier.clickable(onClick = onClick)) {
+    OutlinedCard(modifier.clickable(onClick = onClick), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(rootIcon(f), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
             Spacer(Modifier.height(4.dp))

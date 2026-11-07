@@ -21,8 +21,9 @@ import kotlinx.coroutines.launch
 
 sealed interface Op {
     data class Rename(val item: FileItem) : Op
-    data class Move(val items: List<FileItem>) : Op
-    data class Delete(val items: List<FileItem>) : Op
+    /** [onDone] runs once the operation has been carried out (e.g. the viewer closes when its file is gone). */
+    data class Move(val items: List<FileItem>, val onDone: () -> Unit = {}) : Op
+    data class Delete(val items: List<FileItem>, val onDone: () -> Unit = {}) : Op
     data class Copy(val items: List<FileItem>) : Op
     data class Compress(val items: List<FileItem>) : Op
     data class Extract(val item: FileItem) : Op
@@ -46,8 +47,8 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
             catch (e: Throwable) { env.snackbar.showSnackbar("$failurePrefix: ${e.friendly()}") }
         }
     }
-    var crossMove by remember { mutableStateOf<Pair<List<FileItem>, ItemId>?>(null) }
-    crossMove?.let { (items, dest) ->
+    var crossMove by remember { mutableStateOf<Triple<List<FileItem>, ItemId, () -> Unit>?>(null) }
+    crossMove?.let { (items, dest, done) ->
         AlertDialog(
             onDismissRequest = { crossMove = null },
             title = { Text("Move ${itemsLabel(items)}?") },
@@ -63,6 +64,7 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
                 TextButton({
                     crossMove = null
                     items.forEach { env.app.transfers.enqueueCopy(it, dest, move = true) }
+                    done()
                     scope.launch { env.snackbar.showSnackbar("Moving ${itemsLabel(items)}…") }
                 }) { Text("Move") }
             },
@@ -70,9 +72,11 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
         )
     }
     /** Trashes Filen items (one Undo restores them all); local items are deleted for good. */
-    suspend fun deleteAll(items: List<FileItem>) {
+    suspend fun deleteAll(items: List<FileItem>, onDone: (() -> Unit)? = null) {
         val undos = items.mapNotNull { env.app.router.modifier(it)!!.trash(it) }
         env.app.notifyChanged()
+        // Leaving the screen clears the snackbar host; wait a moment so the Undo below is not swept away with it.
+        if (onDone != null) { onDone(); kotlinx.coroutines.delay(400) }
         val r = env.snackbar.showSnackbar(
             if (undos.isNotEmpty()) "Moved ${itemsLabel(items)} to trash" else "Deleted ${itemsLabel(items)}",
             actionLabel = if (undos.isNotEmpty()) "Undo" else null, duration = SnackbarDuration.Long)
@@ -110,9 +114,10 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
         is Op.Move -> DestinationDialog(env, op.items, "Move", onClose) { dest ->
             val same = op.items.filter { it.id.scheme == dest.scheme }
             val other = op.items.filter { it.id.scheme != dest.scheme }
-            if (other.isNotEmpty()) crossMove = other to dest // other storage: copy first, delete the originals afterwards
+            if (other.isNotEmpty()) crossMove = Triple(other, dest, op.onDone) // other storage: copy first, delete the originals afterwards
             if (same.isEmpty()) onClose() else run("Move failed") {
                 same.forEach { env.app.router.modifier(it)!!.move(it, dest) }
+                op.onDone()
                 scope.launch { env.snackbar.showSnackbar("Moved ${itemsLabel(same)}") }
             }
         }
@@ -144,12 +149,12 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
                         if (op.items[0].isDirectory) "The folder and everything in it will be permanently deleted." else "This file will be permanently deleted. This can't be undone."
                     } else "Items on this device are permanently deleted (folders with everything in them); Filen items go to the Filen trash.")
                 },
-                confirmButton = { TextButton({ run("Delete failed") { deleteAll(op.items) } }) { Text("Delete") } },
+                confirmButton = { TextButton({ run("Delete failed") { deleteAll(op.items, op.onDone) } }) { Text("Delete") } },
                 dismissButton = { TextButton(onClose) { Text("Cancel") } },
             )
         } else {
             // Filen: goes to the trash, with an Undo.
-            LaunchedEffect(op) { run("Delete failed") { deleteAll(op.items) } }
+            LaunchedEffect(op) { run("Delete failed") { deleteAll(op.items, op.onDone) } }
         }
     }
 }

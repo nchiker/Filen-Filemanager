@@ -10,6 +10,7 @@ import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import app.filenfiles.FilesApp
 import app.filenfiles.core.ItemId
+import app.filenfiles.core.Names
 import app.filenfiles.core.RecentUploads
 import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.LocalCache
@@ -48,7 +49,9 @@ class TransferManager(private val app: FilesApp) {
     enum class State { QUEUED, PREPARING, UPLOADING, WAITING_NETWORK, DONE, FAILED, CANCELLED }
 
     /** UPLOAD sends a picked document/staged file to [Transfer.parent]; COPY copies/moves [Transfer.source] (file or folder) there. */
-    enum class Kind { UPLOAD, COPY, ZIP, UNZIP }
+    enum class Kind { UPLOAD, COPY, ZIP, UNZIP,
+        /** ADDZIP: [Transfer.source] is the zip, [Transfer.sources] the staged local files to add, [Transfer.prefix] the folder inside it. */
+        ADDZIP }
 
     data class Transfer(
         val id: Long, val name: String, val uri: Uri, val parent: ItemId, val mime: String?,
@@ -67,12 +70,15 @@ class TransferManager(private val app: FilesApp) {
         val sources: List<ItemId> = emptyList(),
         /** Documents-provider writes: the `filen-pending:N` id the other app was given, kept so its row survives a restart. */
         val docId: String? = null,
+        /** ADDZIP only: the folder inside the archive the files go to ("" or "a/b/"). */
+        val prefix: String = "",
     ) {
         /** Present-tense label for the panel/notification. */
         val verb: String get() = when {
             kind == Kind.UPLOAD -> "Uploading"
             kind == Kind.ZIP -> "Compressing"
             kind == Kind.UNZIP -> "Extracting"
+            kind == Kind.ADDZIP -> "Updating zip"
             move -> "Moving"
             source != null && source.scheme != "local" && parent.scheme == "local" -> "Saving"
             else -> "Copying"
@@ -162,6 +168,42 @@ class TransferManager(private val app: FilesApp) {
         startService(); schedule(t.id); return t.id
     }
 
+    /**
+     * Queues adding the picked documents to the zip [zip] (inside [prefix], an archive folder like "docs/"). The files
+     * are copied to private staging first, so the job survives the picker's Uri grants going away.
+     */
+    fun enqueueAddToZip(zip: app.filenfiles.core.FileItem, uris: List<Uri>, prefix: String) {
+        val ctx = app.applicationContext
+        val id = ids.getAndIncrement()
+        val parent = app.router.parentOf(zip.id) ?: ItemId("none:")
+        val t = Transfer(id, zip.name, Uri.EMPTY, parent, "application/zip", -1, state = State.PREPARING,
+            kind = Kind.ADDZIP, source = zip.id, prefix = prefix)
+        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        startService()
+        scope.launch {
+            val dir = File(LocalCache.dir(ctx, LocalCache.UPLOAD), "$id").apply { mkdirs() }
+            try {
+                val staged = ArrayList<ItemId>()
+                val used = ArrayList<String>()
+                for (uri in uris) {
+                    var name = "file"
+                    runCatching { ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) name = it.getString(0) ?: name } }
+                    name = Names.unique(used, name.replace('/', '_').ifBlank { "file" }); used += name
+                    val f = File(dir, name)
+                    val input = ctx.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Couldn't read “$name”.")
+                    input.use { i -> f.outputStream().use { o -> i.copyTo(o) } }
+                    staged += ItemId("local:${f.absolutePath}")
+                }
+                update(id) { if (it.state == State.PREPARING) it.copy(state = State.QUEUED, sources = staged) else it }
+                schedule(id)
+            } catch (e: CancellationException) { throw e
+            } catch (e: Throwable) {
+                dir.deleteRecursively()
+                fail(id, e.friendlyOrNull() ?: e.message ?: "Couldn't read the files to add")
+            }
+        }
+    }
+
     /** Queues an already-local file (written by another app through the documents provider). Takes ownership of [file]. */
     fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?, docId: String? = null): Long {
         val t = Transfer(ids.getAndIncrement(), name, Uri.fromFile(file), parent, mime, file.length(), file = file, docId = docId)
@@ -185,7 +227,10 @@ class TransferManager(private val app: FilesApp) {
     /** True while the transfer is still pending (queued, running, waiting or failed-but-retryable). */
     fun isPending(id: Long) = find(id)?.let { it.state != State.DONE && it.state != State.CANCELLED } == true
 
-    private fun discardSource(t: Transfer?) { t?.file?.parentFile?.deleteRecursively() }
+    private fun discardSource(t: Transfer?) {
+        t?.file?.parentFile?.deleteRecursively()
+        if (t?.kind == Kind.ADDZIP) File(LocalCache.dir(app.applicationContext, LocalCache.UPLOAD), "${t.id}").deleteRecursively()
+    }
 
     fun cancel(id: Long) {
         val t = find(id) ?: return
@@ -241,7 +286,7 @@ class TransferManager(private val app: FilesApp) {
                     .put("error", t.error ?: JSONObject.NULL).put("file", t.file?.absolutePath ?: JSONObject.NULL)
                     .put("startedAt", t.startedAt).put("staged", t.staged)
                     .put("kind", t.kind.name).put("source", t.source?.value ?: JSONObject.NULL).put("move", t.move)
-                    .put("sources", JSONArray(t.sources.map { it.value })).put("docId", t.docId ?: JSONObject.NULL))
+                    .put("sources", JSONArray(t.sources.map { it.value })).put("docId", t.docId ?: JSONObject.NULL).put("prefix", t.prefix))
             }
             if (a.length() == 0) { storeFile.delete(); return }
             val tmp = File(storeFile.parentFile, storeFile.name + ".part")
@@ -270,6 +315,7 @@ class TransferManager(private val app: FilesApp) {
                     move = o.optBoolean("move"),
                     sources = o.optJSONArray("sources")?.let { a -> (0 until a.length()).map { ItemId(a.getString(it)) } } ?: emptyList(),
                     docId = o.optString("docId").takeIf { !o.isNull("docId") && it.isNotEmpty() },
+                    prefix = o.optString("prefix", ""),
                 )
             }
         }.getOrNull() ?: return
@@ -291,7 +337,7 @@ class TransferManager(private val app: FilesApp) {
         val ctx = app.applicationContext
         val t0 = find(id) ?: return
         if (t0.kind == Kind.COPY) { processCopy(t0); return }
-        if (t0.kind == Kind.ZIP || t0.kind == Kind.UNZIP) { processArchive(t0); return }
+        if (t0.kind == Kind.ZIP || t0.kind == Kind.UNZIP || t0.kind == Kind.ADDZIP) { processArchive(t0); return }
         val storage = app.router.writable(t0.parent)
         if (storage == null) { fail(id, "This folder doesn't accept uploads."); return }
         val staging = File(LocalCache.dir(ctx, LocalCache.UPLOAD), "$id").apply { mkdirs() }
@@ -388,13 +434,21 @@ class TransferManager(private val app: FilesApp) {
                     ).run(local, dest, move = false)
                 },
             )
-            if (t0.kind == Kind.ZIP) runner.zip(t0.sources, t0.parent, t0.name)
-            else runner.unzip(t0.source ?: error("No archive"), t0.parent)
+            when (t0.kind) {
+                Kind.ZIP -> runner.zip(t0.sources, t0.parent, t0.name)
+                Kind.ADDZIP -> {
+                    val files = t0.sources.map { File(it.key) }
+                    if (files.any { !it.isFile }) throw java.io.IOException("The files to add are gone. Pick them again.")
+                    runner.addToZip(t0.source ?: error("No archive"), files, t0.prefix)
+                }
+                else -> runner.unzip(t0.source ?: error("No archive"), t0.parent)
+            }
             finishOk(id)
+            if (t0.kind == Kind.ADDZIP) discardSource(t0)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            fail(id, e.friendlyOrNull() ?: e.message ?: "Couldn't ${if (t0.kind == Kind.ZIP) "compress" else "extract"}")
+            fail(id, e.friendlyOrNull() ?: e.message ?: "Couldn't ${when (t0.kind) { Kind.ZIP -> "compress"; Kind.ADDZIP -> "update the zip"; else -> "extract" }}")
         } finally {
             withContext(kotlinx.coroutines.NonCancellable) { work.deleteRecursively() }
         }

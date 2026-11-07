@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
@@ -35,6 +36,8 @@ private val tabs = listOf(
 
 fun folderRoute(id: ItemId) = "folder/${Uri.encode(id.value)}"
 fun viewerRoute(id: ItemId) = "viewer/${Uri.encode(id.value)}"
+fun archiveRoute(id: ItemId) = "archive/${Uri.encode(id.value)}"
+fun isZip(item: FileItem) = !item.isDirectory && (item.name.endsWith(".zip", ignoreCase = true) || item.mime == "application/zip")
 
 /** Everything screens need: services plus item-level actions wired to navigation. */
 class AppEnv(val app: FilesApp, val nav: NavHostController, val actions: ItemActions, val snackbar: SnackbarHostState)
@@ -74,7 +77,13 @@ fun AppRoot(app: FilesApp) {
         }
         ItemActions(
             selection = selection,
-            open = { if (it.isDirectory) nav.navigate(folderRoute(it.id)) else nav.navigate(viewerRoute(it.id)) },
+            open = {
+                when {
+                    it.isDirectory -> nav.navigate(folderRoute(it.id))
+                    isZip(it) -> nav.navigate(archiveRoute(it.id)) // browse inside, like Google Files
+                    else -> nav.navigate(viewerRoute(it.id))
+                }
+            },
             openWith = { withFile(it) { f -> OpenWith.open(ctx, f) } },
             share = { withFile(it) { f -> OpenWith.share(ctx, f) } },
             toggleFavorite = { item ->
@@ -99,6 +108,7 @@ fun AppRoot(app: FilesApp) {
             shareWith = { op = Op.ShareWith(listOf(it)) },
             canStopSharing = { app.router.sharing()?.canUnshare(it) == true },
             stopSharing = { op = Op.StopSharing(it) },
+            run = { op = it },
         )
     }
     val env = remember(app, nav, actions) { AppEnv(app, nav, actions, snackbar) }
@@ -124,10 +134,13 @@ fun AppRoot(app: FilesApp) {
     val start = if (session == FilenSession.State.LoggedOut && !app.prefs.skippedLogin) "login" else "home"
 
     Scaffold(
+        // Each screen's own bar (TopAppBar, search pill, selection bar) already clears the status bar; without this
+        // the Scaffold added the same inset again and left a big empty band at the top.
+        contentWindowInsets = WindowInsets.navigationBars,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = { Column {
             TransfersPanel(env, padForNavBar = !showBar)
-            if (showBar) NavigationBar {
+            if (showBar) NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 tabs.forEach { t ->
                     NavigationBarItem(
                         selected = route == t.route,
@@ -138,6 +151,10 @@ fun AppRoot(app: FilesApp) {
                             }
                         },
                         icon = { Icon(t.icon, t.label) }, label = { Text(t.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant),
                     )
                 }
             }
@@ -159,6 +176,9 @@ fun AppRoot(app: FilesApp) {
             }
             composable("viewer/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
                 ViewerScreen(env, ItemId(it.arguments!!.getString("id")!!))
+            }
+            composable("archive/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
+                ArchiveScreen(env, ItemId(it.arguments!!.getString("id")!!))
             }
         }
         // Registered after the NavHost on purpose: the most recently registered handler gets Back first.

@@ -182,7 +182,16 @@ class StorageRouter(private val providers: List<StorageProvider>) {
         providers.firstOrNull { it.owns(id) } ?: error("No provider for ${id.value}")
 
     suspend fun roots(): List<Folder> = providers.flatMap { runCatching { it.roots() }.getOrDefault(emptyList()) }
-    suspend fun list(id: ItemId): Listing = provider(id).list(id)
+    /** Folders of the .zip files seen in listings, so a zip can be rewritten in place without a parent lookup API. */
+    private val zipParents = java.util.concurrent.ConcurrentHashMap<String, ItemId>()
+
+    suspend fun list(id: ItemId): Listing = provider(id).list(id).also { l ->
+        l.items.forEach { if (!it.isDirectory && it.name.endsWith(".zip", ignoreCase = true)) zipParents[it.id.value] = id }
+    }
+
+    /** The folder holding [item], when known: always for device files, otherwise for zips that were listed in this session. */
+    fun parentOf(item: ItemId): ItemId? =
+        if (item.scheme == "local") java.io.File(item.key).parent?.let { ItemId("local:$it") } else zipParents[item.value]
     suspend fun stat(id: ItemId): FileItem? = provider(id).stat(id)
     suspend fun serverFavorites(): List<FileItem> =
         providers.flatMap { runCatching { it.favorites() }.getOrDefault(emptyList()) }

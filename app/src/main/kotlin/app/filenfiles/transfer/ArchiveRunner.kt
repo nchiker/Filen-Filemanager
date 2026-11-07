@@ -80,6 +80,69 @@ class ArchiveRunner(
         }
     }
 
+    /**
+     * Adds the local [files] to the zip [zip], inside the archive folder [prefix] ("" = top level, otherwise "a/b/").
+     * A new zip is written next to the work files first; the original is only replaced once that is complete, so a
+     * failure (or cancel) at any point leaves the original untouched. Names that already exist in the archive get a
+     * numbered suffix. Device zips are replaced in place; Filen and cloud zips are re-uploaded under a temporary name,
+     * the old one is trashed/deleted, and the new one is renamed to the original name.
+     */
+    suspend fun addToZip(zip: ItemId, files: List<File>, prefix: String) {
+        if (files.isEmpty()) throw IOException("There is nothing to add.")
+        val item = router.stat(zip) ?: throw IOException("The zip is no longer there.")
+        val storage = router.modifier(item) ?: throw IOException("This zip can't be changed (it is read-only).")
+        val parent = router.parentOf(zip) ?: throw IOException("Couldn't tell which folder this zip is in. Open the zip from its folder and try again.")
+        val src = if (item.origin == Origin.LOCAL) item.id.key else router.materialize(item).path
+        val total = File(src).length() + files.sumOf { it.length() }
+        setTotal(total)
+        LocalCache.requireSpace(app.applicationContext, total)
+        workDir.deleteRecursively(); workDir.mkdirs()
+        val out = File(workDir, item.name.replace('/', '_'))
+        try {
+            ZipFile(src).use { zf ->
+                ZipOutputStream(out.outputStream().buffered(1 shl 16)).use { zos ->
+                    val seen = HashSet<String>()
+                    for (e in zf.entries()) {
+                        currentCoroutineContext().ensureActive()
+                        if (!seen.add(e.name)) continue // a damaged zip may repeat a name; ZipOutputStream would refuse it
+                        zos.putNextEntry(ZipEntry(e.name).apply { if (e.time > 0) time = e.time })
+                        if (!e.isDirectory) try { zf.getInputStream(e).use { copy(it, zos) } } catch (ex: java.util.zip.ZipException) {
+                            throw IOException("Couldn't read “${e.name}”: the zip is damaged or password protected (not supported).")
+                        }
+                        zos.closeEntry()
+                    }
+                    // Names already used in the target archive folder (files and sub-folders), for numbering.
+                    val used = seen.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix).substringBefore('/') }.filter { it.isNotEmpty() }.toMutableList()
+                    for (f in files) {
+                        currentCoroutineContext().ensureActive()
+                        val name = Names.unique(used, f.name); used += name
+                        zos.putNextEntry(ZipEntry("$prefix$name").apply { time = f.lastModified().takeIf { it > 0 } ?: System.currentTimeMillis() })
+                        f.inputStream().buffered(1 shl 16).use { copy(it, zos) }
+                        zos.closeEntry()
+                    }
+                }
+            }
+            if (item.origin == Origin.LOCAL) {
+                val target = File(item.id.key)
+                val tmp = File(target.parentFile, ".${target.name}.updating")
+                try {
+                    out.copyTo(tmp, overwrite = true)
+                    if (!tmp.renameTo(target)) throw IOException("Couldn't replace “${item.name}”.")
+                } finally { tmp.delete() }
+            } else {
+                val existing = router.list(parent).items.map { it.name }
+                val tmpName = Names.unique(existing, item.name.replace(Regex("(?i)\\.zip$"), "") + " (updating).zip")
+                val uploaded = storage.upload(parent, out.absolutePath, tmpName, "application/zip") { }
+                // Only now is the new zip safely stored; swap it in. If the rename fails the user still has the updated zip.
+                storage.trash(item)
+                try { storage.rename(uploaded, item.name) }
+                catch (e: Throwable) { throw IOException("The updated zip was saved as “$tmpName” (renaming it back failed).") }
+            }
+        } finally {
+            workDir.deleteRecursively()
+        }
+    }
+
     // ---- helpers ----
 
     private suspend fun scan(item: FileItem): Long =

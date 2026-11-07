@@ -209,6 +209,27 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   answers from the last listing it saw (`FilesApp.listingCache`) plus the queue, so the "Waiting for network…" status is visible. No provider `call()` API
   (MANAGE_DOCUMENTS gates it). With App lock on and locked, the provider refuses other apps (AuthenticationRequiredException).
 
+## Stack look, zip browsing, add-to-zip, viewer actions (unreleased, after 0.3.1)
+- **Stack-like UI**: fixed Stack palette in `ui/Theme.kt` (`StackColors`: white paper / #202124 ink / #1A73E8 blue / #DADCE0 outlines; dark variant
+  #17181A; no wallpaper-derived colours), Home header is Stack's raised search pill with settings + account avatar (`StackSearchBar`,
+  `AccountAction`), outlined cards, blue-only bottom nav. Scaffold uses `contentWindowInsets = WindowInsets.navigationBars` because every
+  screen's own bar already clears the status bar (it used to be doubled). Follows the system light/dark setting (Stack itself is always light).
+- **Open zips** (`ui/ArchiveScreen.kt`, route `archive/{id}`): tapping a .zip browses it like a folder (breadcrumbs, back goes up a level);
+  a file is unpacked alone into `cache/open/zip-*` and shown (image/PDF built-in, else Open With); toolbar "Extract all" = old Extract flow.
+- **Add files to a zip** (`ArchiveRunner.addToZip`, `Kind.ADDZIP` in TransferManager, persisted incl. `prefix`): picked files are staged in
+  `cache/upload/<id>/`, a NEW zip is written first, the original is replaced only when that is complete. Device zips: temp file + rename.
+  Filen/cloud zips: upload as "<name> (updating).zip", trash/delete the old one, rename the new one back (if the rename fails the updated
+  zip stays under the "(updating)" name). Name clashes inside the zip become "a (1).txt". Needs the zip's parent folder:
+  `StorageRouter.parentOf` (device: from the path; others: remembered from listings in this session), so a zip reached only through
+  search/recents/favorites on Filen has no "Add files" button until its folder has been opened. Not offered on read-only shares.
+  **Device-tested on a device zip only. The Filen path (upload/trash/rename) is NOT tested on a real account** (the old test folder is gone).
+- **Viewer actions**: bottom bar Copy / Move / Delete / Share / Open with (`ViewerScreen`); Move/Delete close the viewer afterwards via
+  `Op.onDone` (Delete waits 400 ms so the Undo snackbar isn't cleared by the navigation). Device-tested (copy, move, delete).
+- **Update banner fix**: the remembered "update available" answer is now dropped at startup when the installed version has caught up with it
+  (it used to linger up to 24 h after installing the update). Device-verified.
+- The phone's installed copy is signed with the **debug** key (not the release key): `adb install -r` of the release APK is refused;
+  install the debug APK to upgrade in place without losing the login.
+
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
 x86_64 build, camera backup content-trigger (instead of the 30-minute poll).
