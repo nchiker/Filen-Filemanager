@@ -222,7 +222,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   zip stays under the "(updating)" name). Name clashes inside the zip become "a (1).txt". Needs the zip's parent folder:
   `StorageRouter.parentOf` (device: from the path; others: remembered from listings in this session), so a zip reached only through
   search/recents/favorites on Filen has no "Add files" button until its folder has been opened. Not offered on read-only shares.
-  **Device-tested on a device zip only. The Filen path (upload/trash/rename) is NOT tested on a real account** (the old test folder is gone).
+  Device-tested on a device zip by an agent; the Filen path (upload / trash / rename-back) was tried by the owner on their real account and worked (reported 2026-11-07, no details recorded).
 - **Viewer actions**: bottom bar Copy / Move / Delete / Share / Open with (`ViewerScreen`); Move/Delete close the viewer afterwards via
   `Op.onDone` (Delete waits 400 ms so the Undo snackbar isn't cleared by the navigation). Device-tested (copy, move, delete).
 - **Update banner fix**: the remembered "update available" answer is now dropped at startup when the installed version has caught up with it
@@ -231,8 +231,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   component as the storages, so it follows the four-way layout toggle (both also under Settings > Storage); Settings > Appearance > Theme (System / Light / Dark, `Prefs.themeMode`, status-bar icon style follows it;
   default System); round white "+" FAB in writable folders (Upload files / New folder) replaces the top-bar icons; "Add to a zip…" in the file
   menu and in the multi-select menu (`Op.AddToZip` + `ZipPickerDialog`, `TransferManager.enqueueAddItemsToZip`; sources can be any storage's files);
-  cards and the search field are outlined/rounded like Stack. Still NOT exercised on the real Filen account: adding to a zip that lives on Filen
-  (the permission classifier blocked the agent's "New folder" tap in the Drive; create a test folder by hand first).
+  cards and the search field are outlined/rounded like Stack. Adding to a zip that lives on Filen was then tested by the owner by hand and worked (the permission classifier had blocked an agent from creating the Drive test folder).
 - The phone's installed copy is signed with the **debug** key (not the release key): `adb install -r` of the release APK is refused;
   install the debug APK to upgrade in place without losing the login.
 
@@ -240,7 +239,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
 - Zip logic now lives in `:core` (`ZipEdit`: archive listing, add-with-numbering rewrite) with 11 unit tests (`ZipEditTest`); `ArchiveRunner` only handles storage/swap.
 - README brought up to date (several "not done" limits there were long fixed). Feature comparison with Google Drive / Files by Google: `docs/ROADMAP.md`.
 - Version bumped to 0.4.0 (versionCode 6); NOT yet tagged/released. Release build compiles (R8 on); release APK was not installed (phone has the debug-signed copy).
-- Still untested on a real Filen account: adding to a zip stored on Filen (upload / trash / rename-back path).
+- Add-to-zip on a Filen-hosted zip: verified by the owner on their real account.
 
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
