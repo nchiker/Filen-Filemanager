@@ -209,7 +209,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   answers from the last listing it saw (`FilesApp.listingCache`) plus the queue, so the "Waiting for network…" status is visible. No provider `call()` API
   (MANAGE_DOCUMENTS gates it). With App lock on and locked, the provider refuses other apps (AuthenticationRequiredException).
 
-## Stack look, zip browsing, add-to-zip, viewer actions (unreleased, after 0.3.1)
+## Stack look, zip browsing, add-to-zip, viewer actions (version 0.4.0, versionCode 6 - not yet released/tagged)
 - **Stack-like UI**: fixed Stack palette in `ui/Theme.kt` (`StackColors`: white paper / #202124 ink / #1A73E8 blue / #DADCE0 outlines; dark variant
   #17181A; no wallpaper-derived colours), Home header is Stack's raised search pill with settings + account avatar (`StackSearchBar`,
   `AccountAction`), outlined cards, blue-only bottom nav. Scaffold uses `contentWindowInsets = WindowInsets.navigationBars` because every
@@ -235,6 +235,12 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   (the permission classifier blocked the agent's "New folder" tap in the Drive; create a test folder by hand first).
 - The phone's installed copy is signed with the **debug** key (not the release key): `adb install -r` of the release APK is refused;
   install the debug APK to upgrade in place without losing the login.
+
+## 0.4.0 prep notes
+- Zip logic now lives in `:core` (`ZipEdit`: archive listing, add-with-numbering rewrite) with 11 unit tests (`ZipEditTest`); `ArchiveRunner` only handles storage/swap.
+- README brought up to date (several "not done" limits there were long fixed). Feature comparison with Google Drive / Files by Google: `docs/ROADMAP.md`.
+- Version bumped to 0.4.0 (versionCode 6); NOT yet tagged/released. Release build compiles (R8 on); release APK was not installed (phone has the debug-signed copy).
+- Still untested on a real Filen account: adding to a zip stored on Filen (upload / trash / rename-back path).
 
 ## Ideas not done yet
 Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,

@@ -5,6 +5,7 @@ import app.filenfiles.core.FileItem
 import app.filenfiles.core.ItemId
 import app.filenfiles.core.Names
 import app.filenfiles.core.Origin
+import app.filenfiles.core.ZipEdit
 import app.filenfiles.filen.LocalCache
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -99,29 +100,9 @@ class ArchiveRunner(
         workDir.deleteRecursively(); workDir.mkdirs()
         val out = File(workDir, item.name.replace('/', '_'))
         try {
-            ZipFile(src).use { zf ->
-                ZipOutputStream(out.outputStream().buffered(1 shl 16)).use { zos ->
-                    val seen = HashSet<String>()
-                    for (e in zf.entries()) {
-                        currentCoroutineContext().ensureActive()
-                        if (!seen.add(e.name)) continue // a damaged zip may repeat a name; ZipOutputStream would refuse it
-                        zos.putNextEntry(ZipEntry(e.name).apply { if (e.time > 0) time = e.time })
-                        if (!e.isDirectory) try { zf.getInputStream(e).use { copy(it, zos) } } catch (ex: java.util.zip.ZipException) {
-                            throw IOException("Couldn't read “${e.name}”: the zip is damaged or password protected (not supported).")
-                        }
-                        zos.closeEntry()
-                    }
-                    // Names already used in the target archive folder (files and sub-folders), for numbering.
-                    val used = seen.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix).substringBefore('/') }.filter { it.isNotEmpty() }.toMutableList()
-                    for ((f, entryName) in files) {
-                        currentCoroutineContext().ensureActive()
-                        val name = Names.unique(used, entryName.replace('/', '_')); used += name
-                        zos.putNextEntry(ZipEntry("$prefix$name").apply { time = f.lastModified().takeIf { it > 0 } ?: System.currentTimeMillis() })
-                        f.inputStream().buffered(1 shl 16).use { copy(it, zos) }
-                        zos.closeEntry()
-                    }
-                }
-            }
+            val job = currentCoroutineContext()[kotlinx.coroutines.Job]
+            ZipEdit.addFiles(File(src), out, files, prefix,
+                onBytes = { n -> done += n; setDone(done) }, check = { job?.ensureActive() })
             if (item.origin == Origin.LOCAL) {
                 val target = File(item.id.key)
                 val tmp = File(target.parentFile, ".${target.name}.updating")

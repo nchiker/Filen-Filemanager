@@ -21,16 +21,23 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
 
 ## What works
 
-- **Home** – storage shortcuts, favorites, recent files (Filen personal, received shares, local).
+- **Home** – Stack-style search bar, storage shortcuts, a *Tools* section (Free up space, Trash) that follows the same
+  four-way layout toggle, favorites, recent files (Filen personal, received shares, local).
 - **Files** – Filen Drive and local folders (Downloads, Documents, Pictures, Camera, Music, Movies, internal storage).
-  Breadcrumbs, list/grid view, sorting (name / date / size), per-item menu (open, open with, share, favorite, details).
+  Breadcrumbs, list/grid view, sorting (name / date / size), per-item menu (open, open with, share, favorite, details),
+  and a round **+** button for uploading files and creating folders where the folder accepts them.
 - **Shared** – *Shared with me* and *Shared by me* are separate namespaces (`filen-in:` / `filen-out:`), never merged
   into personal files. Items carry a visible badge ("Shared by …", "Shared with …", read-only lock) in lists,
   search results, recents and favorites. Write permission of a received share is tracked per item.
 - **Favorites** – app-level favorites for any location (Filen, shared, local), plus Filen's server-side favorites.
 - **Search** – across Filen personal, shared and local files, with scope chips.
 - **Viewers** – built-in image (pinch-zoom) and PDF viewers; everything else goes to Android's Open With.
-  Filen files are downloaded and decrypted on demand into the app cache (no manual download step).
+  Filen files are downloaded and decrypted on demand into the app cache (no manual download step). While a file is
+  open, a bottom bar offers **Copy, Move, Delete, Share and Open with**.
+- **Zip files** – tapping a `.zip` browses it like a folder (tap a file to unpack and open just that one, *Extract all* in
+  the toolbar). **Add files to a zip** from the zip screen (system picker) or with *Add to a zip…* in a file's menu or the
+  multi-select menu. The new zip is written completely before it replaces the old one; zips on Filen or cloud storage are
+  re-uploaded, the old one is trashed and the new one renamed back. Password-protected zips are not supported.
 - **Copy, move and save to device** across Filen, shared and local storage (folders too); **zip / unzip**; **multi-select**
   with batch actions; **file version history**; **share with Filen contacts**; **trash**; an upload/copy queue that survives
   the app being killed.
@@ -39,7 +46,8 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
 - **Free up space**: find duplicate and large files on the phone or in Filen Drive.
 - **Camera backup** to a Filen folder (Wi-Fi only by default, new photos only, sorted by month).
 - **App lock**, hide contents in recent apps, and an optional update check (Settings).
-- Light/dark theme (Material You colours on Android 12+).
+- Same look as the Stack app (white paper, one blue accent, outlined cards). **Settings > Appearance > Theme**: follow the
+  system, light or dark.
 
 ## Architecture
 
@@ -119,23 +127,21 @@ so local folders are browsable.
   seeded through the debug hook below).
 - **Writes are limited to your own storage.** Create folder, upload (system picker), rename, move, and delete work in your
   personal Filen drive (delete = Filen trash, with Undo) and on local storage (delete is permanent, with confirmation).
-  Received shares are never written to. There is no trash screen yet to browse/restore/empty Filen's trash.
-- **Favorites** are stored on the device; toggling them does not write Filen's server-side favorite flag
-  (server favorites are shown, read-only).
+  Received shares are never written to. Filen's trash has its own screen (restore, delete forever, empty).
+- **Favorites** of your own Filen items are written to Filen's server-side favorite flag; received shares and device
+  files keep a local star.
 - **Search** over Filen is a client-side index of names (the SDK exposes no server search). It is built in the
-  background right after sign-in and refreshed every 5 minutes. The personal drive indexes in under a second; shared
+  background, saved on the device and refreshed after 6 h (personal) / 24 h (shared). The personal drive indexes in under a second; shared
   trees are crawled one folder at a time (parallel listings made the SDK back off), capped at 3,000 items / 2 minutes,
   taking roughly 45 s on a large share. A search answers within 5 s using whatever is indexed so far, and local results
   appear immediately.
 - **Large shared folders are slow to open** (3–12 s for folders with thousands of entries); this is SDK/server time,
   not UI time (timings are logged under the `FilenPerf` tag).
-- **Shared folders after a process restart:** nested shared directories are resolved from an in-memory map; if
-  the app was killed, re-open the folder from the Shared tab.
-- **Android DocumentsProvider** (letting other apps browse Filen) is not integrated. Filen's reference
-  provider (`external/filen-android-documents-provider`) is built on `filen-mobile-native-cache`, a separate
-  native library with its own TLS init, so it needs its own packaging step.
-- **No thumbnails** for images in lists; no media/audio/video built-in viewer (they open via Open With).
-- **arm64-v8a only** by default (36 MB native library). The release build type is debug-signed.
+- **Android DocumentsProvider:** other apps can browse and open Filen (and add files) through the system picker; existing
+  files are read-only through it (no verified overwrite-in-place on Filen).
+- **No built-in text, audio or video viewer** (they open via Open With).
+- **arm64-v8a only** by default (36 MB native library). Release APKs are signed with the maintainer's private key (see
+  "Releasing"); a debug build is signed with the debug key and cannot update a release install (or the other way round).
 - Uses `MANAGE_EXTERNAL_STORAGE`, which Google Play restricts to file managers via a declaration form.
 - Local search walks the filesystem (bounded to 60k entries), not MediaStore.
 

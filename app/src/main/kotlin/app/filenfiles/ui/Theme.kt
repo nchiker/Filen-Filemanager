@@ -26,7 +26,7 @@ private val Light = lightColorScheme(
     surfaceVariant = StackColors.Wash, onSurfaceVariant = StackColors.Muted,
     surfaceTint = Color.White,
     surfaceContainerLowest = Color.White, surfaceContainerLow = Color.White, surfaceContainer = Color.White,
-    surfaceContainerHigh = StackColors.Wash, surfaceContainerHighest = StackColors.Wash,
+    surfaceContainerHigh = Color.White, surfaceContainerHighest = StackColors.Wash, // dialogs/menus are white like Stack
     outline = StackColors.Line, outlineVariant = Color(0xFFEEEEEE),
     error = Color(0xFFD93025),
 )

@@ -32,6 +32,7 @@ import app.filenfiles.core.ItemId
 import app.filenfiles.core.MaterializedFile
 import app.filenfiles.core.Names
 import app.filenfiles.core.Origin
+import app.filenfiles.core.ZipEdit
 import app.filenfiles.filen.LocalCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -41,31 +42,13 @@ import java.io.File
 import java.io.IOException
 import java.util.zip.ZipFile
 
-private class ZEntry(val path: String, val isDir: Boolean, val size: Long, val time: Long)
+private typealias ZEntry = ZipEdit.Entry
+private typealias ZRow = ZipEdit.Row
 
 private sealed interface ZState {
     data class Downloading(val done: Long, val total: Long) : ZState
     data class Ready(val item: FileItem, val zipPath: String, val entries: List<ZEntry>) : ZState
     data class Failed(val message: String) : ZState
-}
-
-/** One row of the current archive folder. [path] is the entry name ("docs/a.txt") or, for folders, "docs/". */
-private class ZRow(val name: String, val path: String, val isDir: Boolean, val size: Long, val time: Long)
-
-private fun childrenOf(entries: List<ZEntry>, cwd: String): List<ZRow> {
-    val out = LinkedHashMap<String, ZRow>()
-    for (e in entries) {
-        if (!e.path.startsWith(cwd)) continue
-        val rest = e.path.removePrefix(cwd)
-        if (rest.isEmpty()) continue
-        val seg = rest.substringBefore('/')
-        if (seg.isEmpty()) continue
-        if (rest.contains('/')) { // inside a sub-folder (which may have no entry of its own)
-            if (out[seg]?.isDir != true) out[seg] = ZRow(seg, "$cwd$seg/", true, 0, e.time)
-        } else if (e.isDir) out[seg] = ZRow(seg, "$cwd$seg/", true, 0, e.time)
-        else out[seg] = ZRow(seg, e.path, false, e.size, e.time)
-    }
-    return out.values.sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
 }
 
 private fun mimeFor(name: String): String? =
@@ -112,12 +95,7 @@ fun ArchiveScreen(env: AppEnv, id: ItemId) {
             val found = env.app.router.stat(id) ?: error("The zip was not found")
             val path = if (found.origin == Origin.LOCAL) found.id.key
                 else env.app.router.materialize(found) { d, t -> state = ZState.Downloading(d, t) }.path
-            val entries = withContext(Dispatchers.IO) {
-                ZipFile(path).use { zf ->
-                    zf.entries().asSequence().filter { Names.safeEntryPath(it.name) != null }
-                        .map { ZEntry(it.name, it.isDirectory, it.size, it.time) }.toList()
-                }
-            }
+            val entries = withContext(Dispatchers.IO) { ZipEdit.entries(File(path)) }
             ZState.Ready(found, path, entries)
         } catch (e: CancellationException) { throw e }
         catch (e: java.util.zip.ZipException) { ZState.Failed("This file isn't a readable zip (it may be damaged or password protected).") }
@@ -177,7 +155,7 @@ fun ArchiveScreen(env: AppEnv, id: ItemId) {
                     }
                 }
                 if (opening != null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                val rows = remember(s, cwd) { childrenOf(s.entries, cwd) }
+                val rows = remember(s, cwd) { ZipEdit.children(s.entries, cwd) }
                 if (rows.isEmpty()) EmptyState(if (cwd.isEmpty()) "This zip is empty" else "This folder is empty")
                 else LazyColumn(Modifier.fillMaxSize()) {
                     items(rows, key = { it.path }) { r ->

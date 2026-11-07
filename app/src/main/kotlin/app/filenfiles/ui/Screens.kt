@@ -92,12 +92,12 @@ fun rememberSignedIn(env: AppEnv): Boolean {
 
 /** Round account button (initial of the signed-in email); opens the sign-in/sign-out dialog. */
 @Composable
-fun AccountAction(env: AppEnv) {
+fun AccountAction(env: AppEnv, modifier: Modifier = Modifier) {
     var show by remember { mutableStateOf(false) }
     val state by env.app.session.state.collectAsState()
     val email = (state as? FilenSession.State.LoggedIn)?.email
     Box(
-        Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer)
+        modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer)
             .clickable { show = true }.semantics { contentDescription = "Account" },
         Alignment.Center,
     ) {
@@ -396,7 +396,7 @@ fun FilesScreen(env: AppEnv) {
     Column(Modifier.fillMaxSize()) {
         AppBar("Files", actions = {
             IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
-            AccountAction(env)
+            AccountAction(env, Modifier.padding(end = 12.dp))
         })
         LoadHost(roots) { all ->
             LazyColumn(Modifier.fillMaxSize()) {

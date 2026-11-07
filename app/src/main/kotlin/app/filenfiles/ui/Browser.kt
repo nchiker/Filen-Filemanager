@@ -63,7 +63,7 @@ fun FolderScreen(env: AppEnv, id: ItemId) {
             var menu by remember { mutableStateOf(false) }
             Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
                 FloatingActionButton({ menu = true }, shape = androidx.compose.foundation.shape.CircleShape,
-                    containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.primary) {
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
                     Icon(Icons.Filled.Add, "Add")
                 }
                 DropdownMenu(menu, { menu = false }) {
