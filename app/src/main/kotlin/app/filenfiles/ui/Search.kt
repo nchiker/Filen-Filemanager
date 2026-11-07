@@ -54,6 +54,7 @@ fun SearchScreen(env: AppEnv) {
             OutlinedTextField(
                 query, { query = it }, Modifier.weight(1f).focusRequester(focus).padding(end = 8.dp),
                 placeholder = { Text("Search files and folders") }, singleLine = true,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(),
                 trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Filled.Close, "Clear") } },
             )

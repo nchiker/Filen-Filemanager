@@ -182,6 +182,7 @@ class ItemActions(
     val canHistory: (FileItem) -> Boolean = { false },
     val compress: (FileItem) -> Unit = {},
     val extract: (FileItem) -> Unit = {},
+    val addToZip: (FileItem) -> Unit = {},
     val canShareWith: (FileItem) -> Boolean = { false },
     val shareWith: (FileItem) -> Unit = {},
     val canStopSharing: (FileItem) -> Boolean = { false },
@@ -206,6 +207,7 @@ fun ItemMenu(item: FileItem, actions: ItemActions) {
             if (actions.canHistory(item)) DropdownMenuItem({ Text("Version history…") }, { open = false; actions.history(item) })
             DropdownMenuItem({ Text("Compress to zip…") }, { open = false; actions.compress(item) })
             if (!item.isDirectory && item.name.endsWith(".zip", ignoreCase = true)) DropdownMenuItem({ Text("Extract here…") }, { open = false; actions.extract(item) })
+            if (!item.isDirectory) DropdownMenuItem({ Text("Add to a zip…") }, { open = false; actions.addToZip(item) })
             if (item.origin != Origin.LOCAL) DropdownMenuItem({ Text("Save to device") }, { open = false; actions.saveToDevice(item) })
             if (actions.canShareWith(item)) DropdownMenuItem({ Text("Share with a Filen contact…") }, { open = false; actions.shareWith(item) })
             if (actions.canStopSharing(item)) DropdownMenuItem({ Text("Stop sharing…") }, { open = false; actions.stopSharing(item) })
@@ -367,16 +369,16 @@ fun FileGridCell(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
 }
 
 @Composable
-fun FileCollection(items: List<FileItem>, grid: Boolean, actions: ItemActions, modifier: Modifier = Modifier, mixed: Boolean = false, header: (@Composable () -> Unit)? = null) {
+fun FileCollection(items: List<FileItem>, grid: Boolean, actions: ItemActions, modifier: Modifier = Modifier, mixed: Boolean = false, header: (@Composable () -> Unit)? = null, bottomPadding: androidx.compose.ui.unit.Dp = 0.dp) {
     // Tells the selection bar what "select all" covers; also drops selected items that left this list (deleted/moved).
     LaunchedEffect(items) { actions.selection.visible = items }
     if (grid) {
-        LazyVerticalGrid(GridCells.Adaptive(120.dp), modifier, contentPadding = PaddingValues(8.dp),
+        LazyVerticalGrid(GridCells.Adaptive(120.dp), modifier, contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 8.dp + bottomPadding),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(items, key = { it.id.value }) { FileGridCell(it, actions, mixed) }
         }
     } else {
-        LazyColumn(modifier) {
+        LazyColumn(modifier, contentPadding = PaddingValues(bottom = bottomPadding)) {
             if (header != null) item { header() }
             items(items, key = { it.id.value }) { FileRow(it, actions, mixed) }
         }

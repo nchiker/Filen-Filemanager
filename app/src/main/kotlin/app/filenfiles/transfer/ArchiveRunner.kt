@@ -81,19 +81,19 @@ class ArchiveRunner(
     }
 
     /**
-     * Adds the local [files] to the zip [zip], inside the archive folder [prefix] ("" = top level, otherwise "a/b/").
+     * Adds [files] (local file + the name it gets inside the zip) to the zip [zip], inside the archive folder [prefix] ("" = top level, otherwise "a/b/").
      * A new zip is written next to the work files first; the original is only replaced once that is complete, so a
      * failure (or cancel) at any point leaves the original untouched. Names that already exist in the archive get a
      * numbered suffix. Device zips are replaced in place; Filen and cloud zips are re-uploaded under a temporary name,
      * the old one is trashed/deleted, and the new one is renamed to the original name.
      */
-    suspend fun addToZip(zip: ItemId, files: List<File>, prefix: String) {
+    suspend fun addToZip(zip: ItemId, files: List<Pair<File, String>>, prefix: String) {
         if (files.isEmpty()) throw IOException("There is nothing to add.")
         val item = router.stat(zip) ?: throw IOException("The zip is no longer there.")
         val storage = router.modifier(item) ?: throw IOException("This zip can't be changed (it is read-only).")
         val parent = router.parentOf(zip) ?: throw IOException("Couldn't tell which folder this zip is in. Open the zip from its folder and try again.")
         val src = if (item.origin == Origin.LOCAL) item.id.key else router.materialize(item).path
-        val total = File(src).length() + files.sumOf { it.length() }
+        val total = File(src).length() + files.sumOf { it.first.length() }
         setTotal(total)
         LocalCache.requireSpace(app.applicationContext, total)
         workDir.deleteRecursively(); workDir.mkdirs()
@@ -113,9 +113,9 @@ class ArchiveRunner(
                     }
                     // Names already used in the target archive folder (files and sub-folders), for numbering.
                     val used = seen.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix).substringBefore('/') }.filter { it.isNotEmpty() }.toMutableList()
-                    for (f in files) {
+                    for ((f, entryName) in files) {
                         currentCoroutineContext().ensureActive()
-                        val name = Names.unique(used, f.name); used += name
+                        val name = Names.unique(used, entryName.replace('/', '_')); used += name
                         zos.putNextEntry(ZipEntry("$prefix$name").apply { time = f.lastModified().takeIf { it > 0 } ?: System.currentTimeMillis() })
                         f.inputStream().buffered(1 shl 16).use { copy(it, zos) }
                         zos.closeEntry()

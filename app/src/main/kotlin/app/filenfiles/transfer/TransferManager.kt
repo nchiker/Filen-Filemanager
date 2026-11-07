@@ -204,6 +204,14 @@ class TransferManager(private val app: FilesApp) {
         }
     }
 
+    /** Queues adding existing [items] (files on any storage) to the zip [zip], at its top level. */
+    fun enqueueAddItemsToZip(zip: app.filenfiles.core.FileItem, items: List<app.filenfiles.core.FileItem>) {
+        val t = Transfer(ids.getAndIncrement(), zip.name, Uri.EMPTY, app.router.parentOf(zip.id) ?: ItemId("none:"), "application/zip", -1,
+            kind = Kind.ADDZIP, source = zip.id, sources = items.map { it.id })
+        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        startService(); schedule(t.id)
+    }
+
     /** Queues an already-local file (written by another app through the documents provider). Takes ownership of [file]. */
     fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?, docId: String? = null): Long {
         val t = Transfer(ids.getAndIncrement(), name, Uri.fromFile(file), parent, mime, file.length(), file = file, docId = docId)
@@ -437,8 +445,15 @@ class TransferManager(private val app: FilesApp) {
             when (t0.kind) {
                 Kind.ZIP -> runner.zip(t0.sources, t0.parent, t0.name)
                 Kind.ADDZIP -> {
-                    val files = t0.sources.map { File(it.key) }
-                    if (files.any { !it.isFile }) throw java.io.IOException("The files to add are gone. Pick them again.")
+                    // Sources are either staged copies of picked documents or ordinary items from any storage.
+                    val files = t0.sources.map { sid ->
+                        val local = if (sid.scheme == "local") File(sid.key).takeIf { it.isFile } else null
+                        if (local != null) local to local.name
+                        else {
+                            val item = app.router.stat(sid) ?: throw java.io.IOException("A file to add is no longer there.")
+                            File(app.router.materialize(item).path) to item.name
+                        }
+                    }
                     runner.addToZip(t0.source ?: error("No archive"), files, t0.prefix)
                 }
                 else -> runner.unzip(t0.source ?: error("No archive"), t0.parent)

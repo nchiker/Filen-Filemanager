@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.dp
 import app.filenfiles.core.FileItem
 import app.filenfiles.core.Origin
 
-enum class Batch { COPY, MOVE, DELETE, STAR, SAVE, SHARE_WITH, COMPRESS }
+enum class Batch { COPY, MOVE, DELETE, STAR, SAVE, SHARE_WITH, COMPRESS, ADD_TO_ZIP }
 
 /** Replaces the screen's top bar while items are selected. Actions that don't apply to the whole selection are hidden. */
 @Composable
@@ -36,6 +36,7 @@ fun SelectionBar(env: AppEnv, modifier: Modifier = Modifier, onBatch: (Batch, Li
                     if (sel.visible.size > items.size) DropdownMenuItem({ Text("Select all") }, { more = false; sel.selectAll() })
                     DropdownMenuItem({ Text("Add to or remove from favorites") }, { more = false; onBatch(Batch.STAR, items) })
                     DropdownMenuItem({ Text("Compress to zip…") }, { more = false; onBatch(Batch.COMPRESS, items) })
+                    if (items.none { it.isDirectory }) DropdownMenuItem({ Text("Add to a zip…") }, { more = false; onBatch(Batch.ADD_TO_ZIP, items) })
                     if (canSave) DropdownMenuItem({ Text("Save to device") }, { more = false; onBatch(Batch.SAVE, items) })
                     if (canShare) DropdownMenuItem({ Text("Share with a Filen contact…") }, { more = false; onBatch(Batch.SHARE_WITH, items) })
                 }

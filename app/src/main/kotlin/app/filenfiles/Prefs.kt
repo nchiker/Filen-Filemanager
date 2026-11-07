@@ -10,6 +10,8 @@ import org.json.JSONArray
 
 enum class SortKey { NAME, DATE, SIZE }
 
+enum class ThemeMode(val label: String) { SYSTEM("Follow the system"), LIGHT("Light"), DARK("Dark") }
+
 /** How the Storage shortcuts on Home are drawn; tapping the toggle cycles through them. */
 enum class StorageStyle(val label: String) { CARDS("Large cards"), COMPACT("Icons with text"), ICONS("Icons only"), TEXT("Text only") }
 
@@ -24,6 +26,8 @@ class Prefs(context: Context) {
     fun skipLogin() { skippedLogin = true; sp.edit().putBoolean("skippedLogin", true).apply() }
     var favorites by mutableStateOf(loadFavorites()); private set
     var storageStyle by mutableStateOf(runCatching { StorageStyle.valueOf(sp.getString("storageStyle", null)!!) }.getOrDefault(StorageStyle.COMPACT)); private set
+    var themeMode by mutableStateOf(runCatching { ThemeMode.valueOf(sp.getString("themeMode", null)!!) }.getOrDefault(ThemeMode.SYSTEM)); private set
+    fun updateThemeMode(m: ThemeMode) { themeMode = m; sp.edit().putString("themeMode", m.name).apply() }
     // ---- security / updates ----
     var appLock by mutableStateOf(sp.getBoolean("appLock", false)); private set
     var lockTimeoutMs by mutableStateOf(sp.getLong("lockTimeoutMs", 60_000L)); private set

@@ -27,6 +27,8 @@ sealed interface Op {
     data class Copy(val items: List<FileItem>) : Op
     data class Compress(val items: List<FileItem>) : Op
     data class Extract(val item: FileItem) : Op
+    /** Pick a zip (on any writable storage) and add these files to it. */
+    data class AddToZip(val items: List<FileItem>) : Op
     data class History(val item: FileItem) : Op
     data class ShareWith(val items: List<FileItem>) : Op
     data class StopSharing(val item: FileItem) : Op
@@ -126,6 +128,11 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
             onClose()
             env.app.transfers.enqueueZip(op.items, dest)
             scope.launch { env.snackbar.showSnackbar("Compressing ${itemsLabel(op.items)}…") }
+        }
+        is Op.AddToZip -> ZipPickerDialog(env, op.items, onClose) { zip ->
+            onClose()
+            env.app.transfers.enqueueAddItemsToZip(zip, op.items)
+            scope.launch { env.snackbar.showSnackbar("Adding ${itemsLabel(op.items)} to “${zip.name}”…") }
         }
         is Op.Extract -> DestinationDialog(env, listOf(op.item), "Extract", onClose) { dest ->
             onClose()
@@ -241,6 +248,53 @@ fun FolderPickerDialog(
         confirmButton = {
             TextButton({ onPick(here!!) }, enabled = here != null && state is Load.Ok && writable?.canWrite(here) == true && !insideItself && !alreadyHere) { Text(confirmLabel) }
         },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Browser that offers folders to open and writable .zip files to choose; [items] never include the zip itself. */
+@Composable
+private fun ZipPickerDialog(env: AppEnv, items: List<FileItem>, onDismiss: () -> Unit, onPick: (FileItem) -> Unit) {
+    var current by remember { mutableStateOf<ItemId?>(null) }
+    val here = current
+    val state = loadState(here?.value ?: "locations", env.app.changeCounter) {
+        if (here == null) null to env.app.router.roots().filter { r -> env.app.router.writable(r.id)?.canWrite(r.id) == true }
+        else env.app.router.list(here) to emptyList<app.filenfiles.core.Folder>()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add ${itemsLabel(items)} to a zip", maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(Modifier.heightIn(max = 380.dp)) {
+                when (val s = state) {
+                    Load.Loading -> Box(Modifier.fillMaxWidth().height(120.dp), Alignment.Center) { CircularProgressIndicator() }
+                    is Load.Fail -> Text(s.message, color = MaterialTheme.colorScheme.error)
+                    is Load.Ok -> {
+                        val (l, roots) = s.value
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton({ current = l?.trail?.let { t -> if (t.size > 1) t[t.size - 2].id else null } }, enabled = here != null) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Up")
+                            }
+                            Text(l?.folder?.name ?: "Choose where the zip is", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        val rows: List<FileItem> = if (l == null) roots.map { FileItem(it.id, it.name, true, 0, 0, null, it.origin) }
+                        else l.items.filter { f -> f.isDirectory || (isZip(f) && env.app.router.modifier(f) != null && items.none { it.id == f.id }) }
+                            .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                        if (rows.isEmpty()) Text("No folders or zip files here", Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LazyColumn {
+                            items(rows, key = { it.id.value }) { f ->
+                                ListItem(
+                                    modifier = Modifier.clickable { if (f.isDirectory) current = f.id else onPick(f) },
+                                    leadingContent = { Icon(iconFor(f), null, tint = iconTint(f)) },
+                                    headlineContent = { Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
 }

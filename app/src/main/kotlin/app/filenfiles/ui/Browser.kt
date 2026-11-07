@@ -50,16 +50,30 @@ fun FolderScreen(env: AppEnv, id: ItemId) {
             ) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-    Column(Modifier.fillMaxSize()) {
-        AppBar(title, onBack = { env.nav.popBackStack() }, actions = {
-            if (writable != null) {
-                IconButton({ newFolder = true }) { Icon(Icons.Filled.CreateNewFolder, "New folder") }
-                IconButton({ picker.launch(arrayOf("*/*")) }) { Icon(Icons.Filled.Upload, "Upload files") }
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            AppBar(title, onBack = { env.nav.popBackStack() }, actions = {
+                IconButton({ refresh++ }) { Icon(Icons.Filled.Refresh, "Refresh") }
+                IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
+            })
+            FolderContent(env, id, refresh, onTitle = { title = it }, bottomPadding = if (writable != null) 88.dp else 0.dp)
+        }
+        // Stack-style round white "+" button: upload files / new folder (only where this folder accepts them).
+        if (writable != null) {
+            var menu by remember { mutableStateOf(false) }
+            Box(Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
+                FloatingActionButton({ menu = true }, shape = androidx.compose.foundation.shape.CircleShape,
+                    containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.primary) {
+                    Icon(Icons.Filled.Add, "Add")
+                }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem({ Text("Upload files") }, { menu = false; picker.launch(arrayOf("*/*")) },
+                        leadingIcon = { Icon(Icons.Filled.Upload, null) })
+                    DropdownMenuItem({ Text("New folder") }, { menu = false; newFolder = true },
+                        leadingIcon = { Icon(Icons.Filled.CreateNewFolder, null) })
+                }
             }
-            IconButton({ refresh++ }) { Icon(Icons.Filled.Refresh, "Refresh") }
-            IconButton({ env.nav.navigate("search") }) { Icon(Icons.Filled.Search, "Search") }
-        })
-        FolderContent(env, id, refresh, onTitle = { title = it })
+        }
     }
     if (newFolder && writable != null) NewFolderDialog(
         onDismiss = { newFolder = false },
@@ -88,7 +102,7 @@ private fun NewFolderDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
 
 /** Breadcrumbs + sort/view controls + the listing itself. Used by folder screens and the Shared tab. */
 @Composable
-fun FolderContent(env: AppEnv, id: ItemId, refresh: Int, showCrumbs: Boolean = true, onTitle: (String) -> Unit = {}) {
+fun FolderContent(env: AppEnv, id: ItemId, refresh: Int, showCrumbs: Boolean = true, onTitle: (String) -> Unit = {}, bottomPadding: androidx.compose.ui.unit.Dp = 0.dp) {
     var retry by remember { mutableIntStateOf(0) }
     val signedIn = rememberSignedIn(env)
     // Entering a folder shows its last known listing at once; any later reload (refresh, edits) starts from a spinner.
@@ -124,7 +138,7 @@ fun FolderContent(env: AppEnv, id: ItemId, refresh: Int, showCrumbs: Boolean = t
                 "filen-out:root" -> "You haven't shared anything yet"
                 else -> "This folder is empty"
             })
-            else FileCollection(prefs.sort(listing.items), prefs.grid, env.actions, Modifier.weight(1f))
+            else FileCollection(prefs.sort(listing.items), prefs.grid, env.actions, Modifier.weight(1f), bottomPadding = bottomPadding)
         }
     }
 }

@@ -72,7 +72,7 @@ fun rememberHasAllFiles(env: AppEnv): Boolean {
 @Composable
 fun AllFilesBanner(env: AppEnv) {
     val ctx = LocalContext.current
-    Card(Modifier.fillMaxWidth().padding(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+    OutlinedCard(Modifier.fillMaxWidth().padding(12.dp), colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.padding(16.dp)) {
             Text("Allow access to files on this device", style = MaterialTheme.typography.titleSmall)
             Text("A file manager needs “All files access” to browse Downloads, Documents and other folders.", style = MaterialTheme.typography.bodySmall)
@@ -134,7 +134,7 @@ private fun StackSearchBar(env: AppEnv) {
                 Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
                     .clickable { env.nav.navigate("settings") }.semantics { contentDescription = "Settings" },
                 Alignment.Center,
-            ) { Icon(Icons.Filled.Tune, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+            ) { Icon(Icons.Filled.Settings, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             Spacer(Modifier.width(8.dp))
             AccountAction(env)
         }
@@ -205,7 +205,7 @@ fun HomeScreen(env: AppEnv) {
             env.app.prefs.updateVersion?.takeIf { it != env.app.prefs.dismissedUpdate }?.let { v ->
                 item {
                     val ctx = LocalContext.current
-                    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                         Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.SystemUpdate, null); Spacer(Modifier.width(12.dp))
                             Text("Version $v is available", Modifier.weight(1f))
@@ -216,7 +216,7 @@ fun HomeScreen(env: AppEnv) {
                 }
             }
             if (!signedIn) item {
-                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clickable { env.nav.navigate("login") }) {
+                OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clickable { env.nav.navigate("login") }) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Cloud, null); Spacer(Modifier.width(12.dp)); Text("Sign in to Filen to add your cloud storage")
                     }
@@ -245,12 +245,13 @@ fun HomeScreen(env: AppEnv) {
                 }
             }
             item {
-                ListItem(
-                    modifier = Modifier.clickable { env.nav.navigate("cleanup") },
-                    leadingContent = { Icon(Icons.Filled.CleaningServices, null, tint = MaterialTheme.colorScheme.primary) },
-                    headlineContent = { Text("Free up space") },
-                    supportingContent = { Text("Find duplicate and large files") },
-                )
+                // Maintenance shortcuts: small chips, so they don't push the files below them off the screen.
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip({ env.nav.navigate("cleanup") }, { Text("Free up space") },
+                        leadingIcon = { Icon(Icons.Filled.CleaningServices, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) })
+                    if (signedIn) AssistChip({ env.nav.navigate("trash") }, { Text("Trash") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) })
+                }
             }
             val fv = (favs as? Load.Ok)?.value.orEmpty()
             if (fv.isNotEmpty()) {

@@ -103,6 +103,7 @@ fun AppRoot(app: FilesApp) {
             canHistory = { app.router.versioning(it) != null },
             compress = { op = Op.Compress(listOf(it)) },
             extract = { op = Op.Extract(it) },
+            addToZip = { op = Op.AddToZip(listOf(it)) },
             saveToDevice = { saveToDownloads(listOf(it)) },
             canShareWith = { app.router.sharing()?.canShare(it) == true },
             shareWith = { op = Op.ShareWith(listOf(it)) },
@@ -198,6 +199,7 @@ fun AppRoot(app: FilesApp) {
                 }
                 Batch.SAVE -> saveToDownloads(items)
                 Batch.COMPRESS -> op = Op.Compress(items)
+                Batch.ADD_TO_ZIP -> op = Op.AddToZip(items)
             }
         }
         }

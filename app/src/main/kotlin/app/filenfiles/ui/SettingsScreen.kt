@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.filenfiles.ThemeMode
 import app.filenfiles.UpdateChecker
 import app.filenfiles.backup.CameraBackup
 import app.filenfiles.core.ItemId
@@ -57,6 +58,34 @@ fun SettingsScreen(env: AppEnv) {
     Column(Modifier.fillMaxSize()) {
         AppBar("Settings", onBack = { env.nav.popBackStack() })
         LazyColumn(Modifier.fillMaxSize()) {
+            item { SectionTitle("Appearance") }
+            item {
+                var menu by remember { mutableStateOf(false) }
+                ListItem(
+                    modifier = Modifier.clickable { menu = true },
+                    headlineContent = { Text("Theme") },
+                    supportingContent = { Text(prefs.themeMode.label) },
+                    trailingContent = {
+                        DropdownMenu(menu, { menu = false }) {
+                            ThemeMode.entries.forEach { m -> DropdownMenuItem({ Text(m.label) }, { prefs.updateThemeMode(m); menu = false }) }
+                        }
+                    },
+                )
+            }
+            item { SectionTitle("Storage") }
+            item {
+                ListItem(
+                    modifier = Modifier.clickable { env.nav.navigate("cleanup") },
+                    headlineContent = { Text("Free up space") }, supportingContent = { Text("Find duplicate and large files") },
+                )
+            }
+            item {
+                ListItem(
+                    modifier = Modifier.clickable { env.nav.navigate("trash") },
+                    headlineContent = { Text("Trash") }, supportingContent = { Text("Restore or permanently delete items you removed from Filen") },
+                )
+            }
+
             item { SectionTitle("Security") }
             item { SwitchRow("App lock", "Ask for fingerprint, face or screen lock when opening the app, and keep other apps out of your Filen files while it is locked", prefs.appLock, ::setLock) }
             if (prefs.appLock) item {
