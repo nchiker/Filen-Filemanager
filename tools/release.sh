@@ -24,7 +24,6 @@ MAPPING="build/mapping-$VERSION.txt"; cp app/build/outputs/mapping/release/mappi
 "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | grep -q "CN=Filen Files" \
   || { echo "APK is not signed with the release key" >&2; exit 1; }
 
-SHA="$(git rev-list -1 filen-only)"
 if gh release view "v$VERSION" --repo "$REPO" >/dev/null 2>&1; then
   echo "Release v$VERSION exists: replacing its APK"; gh release upload "v$VERSION" "$APK" "$STABLE" "$MAPPING" --repo "$REPO" --clobber
 else

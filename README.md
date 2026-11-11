@@ -158,10 +158,10 @@ adb logcat -s FilenDebug:V      # progress and DONE/FAILED
 
 ## Releasing (maintainer)
 
-This folder is published on its own from a larger local repo, so releases go through two scripts:
+This folder is its own git repo; releases go through two scripts:
 
 ```bash
-tools/publish.sh     # commit first; pushes only this folder's history to GitHub main (git subtree split)
+tools/publish.sh     # commit first; pushes main to GitHub (fast-forward)
 tools/release.sh     # builds the signed, shrunk release APK and attaches it to a GitHub Release (v<versionName>)
 ```
 
