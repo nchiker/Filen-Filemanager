@@ -40,6 +40,18 @@ class Prefs(context: Context) {
     fun updateAppLock(v: Boolean) { appLock = v; sp.edit().putBoolean("appLock", v).apply() }
     fun updateLockTimeout(ms: Long) { lockTimeoutMs = ms; sp.edit().putLong("lockTimeoutMs", ms).apply() }
     fun updateSecureScreen(v: Boolean) { secureScreen = v; sp.edit().putBoolean("secureScreen", v).apply() }
+    /** Packages the owner lets read the folder they gave them while the app is locked (see FilenDocumentsProvider). */
+    var lockedReaders by mutableStateOf(sp.getStringSet("lockedReaders", null)?.toSet() ?: emptySet()); private set
+    /** Packages the owner was already asked about (allowed or "Not now"); listed in Settings, never asked again. */
+    var lockedReadersAsked by mutableStateOf(sp.getStringSet("lockedReadersAsked", null)?.toSet() ?: emptySet()); private set
+    fun setLockedReader(pkg: String, allowed: Boolean, label: String? = null) {
+        lockedReaders = if (allowed) lockedReaders + pkg else lockedReaders - pkg
+        lockedReadersAsked = lockedReadersAsked + pkg
+        sp.edit().putStringSet("lockedReaders", lockedReaders).putStringSet("lockedReadersAsked", lockedReadersAsked)
+            .apply { if (label != null) putString("readerLabel:$pkg", label) }.apply()
+    }
+    /** The name saved when the owner was asked (Android may hide other apps' names later). */
+    fun lockedReaderLabel(pkg: String): String? = sp.getString("readerLabel:$pkg", null)
     fun updateAutoUpdateCheck(v: Boolean) { autoUpdateCheck = v; sp.edit().putBoolean("autoUpdateCheck", v).apply() }
     fun setAvailableUpdate(version: String?, url: String?) {
         updateVersion = version; updateUrl = url

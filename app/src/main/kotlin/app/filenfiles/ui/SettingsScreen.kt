@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -101,6 +102,12 @@ fun SettingsScreen(env: AppEnv) {
                         }
                     },
                 )
+            }
+            if (prefs.appLock) items(prefs.lockedReadersAsked.sorted()) { pkg ->
+                val name = prefs.lockedReaderLabel(pkg) ?: appLabel(ctx, pkg)
+                SwitchRow("$name can read while locked", "Only the Filen folder you gave $name", pkg in prefs.lockedReaders) {
+                    prefs.setLockedReader(pkg, it)
+                }
             }
             item { SwitchRow("Hide contents in recent apps", "Blocks screenshots and blanks the app's preview in the app switcher", prefs.secureScreen) { prefs.updateSecureScreen(it) } }
 

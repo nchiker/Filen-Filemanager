@@ -208,6 +208,26 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   a folder listing never has a gap between the pending row disappearing and the real row showing. Offline, `queryChildDocuments`
   answers from the last listing it saw (`FilesApp.listingCache`) plus the queue, so the "Waiting for network…" status is visible. No provider `call()` API
   (MANAGE_DOCUMENTS gates it). With App lock on and locked, the provider refuses other apps (AuthenticationRequiredException).
+  **Read while locked (0.4.1, versionCode 7)**: an app the owner allowed (Settings > Security, or the one-time "Let X read while
+  locked?" dialog shown after unlocking when that app was refused) can still `queryDocument` / `queryChildDocuments` /
+  `openDocument("r")` / `isChildDocument` inside a folder it holds a PERSISTED grant for (`getOutgoingPersistedUriPermissions` +
+  `checkUriPermission` on the caller's uid/pid; MANAGE_DOCUMENTS holders = picker/Files app never pass). Everything else stays
+  refused while locked (roots empty, search, thumbnails, writes). The question is set in memory by the provider
+  (`AppLock.askReader`), never from an Intent. Asked for by the Finance phone viewer (`app.finance.viewer`, `.debug`).
+  While locked, `queryRoots` still lists "Filen Drive" (title only, CREATE+IS_CHILD flags, no account/search) so pickers offer it;
+  opening it throws AuthenticationRequiredException → the picker's unlock button. The provider asks `AppLock.isLockedForOthers`:
+  the lock time also counts while the app is in the background (before 0.4.1 it was only checked on reopen, so other apps saw
+  it unlocked in the background), with a 60 s minimum so "Immediately" doesn't re-lock before the owner returns to the picker.
+  While locked `queryDocument("filen:root")` still returns the root row: DocumentsUI loads the root document first and only shows
+  its unlock ("sign in") button when `queryChildDocuments` throws AuthenticationRequiredException.
+  `isChildDocument` walks up the ancestor chain, asking Filen for unknown parents (`FilenStorageProvider.parentOf`), so a file
+  several levels below a granted tree resolves after a cold start (found in e2e: grandchild of the tree failed enforceTree).
+  The allow covers EVERY persisted grant the app holds: an app that also holds a grant on `filen:root` can read the whole drive.
+  E2E with Finance (test) on the Pixel 4a, synthetic folder `FinanceE2E-synthetic`: picker unlock button, pick, Allow dialog and
+  allowed locked listings, locked refresh with no unlock, and a cold+locked refresh (fresh process) all verified on 2026-11-11.
+  The ancestor walk itself was not strictly exercised (Finance now lists the tree root first, which teaches the parents);
+  a client that opens a grandchild cold would exercise it. Synthetic test folder `FinanceE2E-synthetic` is still in the owner's
+  Drive (cleanup is the owner's call). Seq-41 "new file appears while locked" step was not run.
 
 ## Stack look, zip browsing, add-to-zip, viewer actions (version 0.4.0, versionCode 6 - not yet released/tagged)
 - **Stack-like UI**: fixed Stack palette in `ui/Theme.kt` (`StackColors`: white paper / #202124 ink / #1A73E8 blue / #DADCE0 outlines; dark variant

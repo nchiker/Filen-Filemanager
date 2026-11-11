@@ -1,6 +1,13 @@
 package app.filenfiles.docs
 
+import android.Manifest
 import android.app.PendingIntent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Binder
+import android.os.Looper
+import android.os.Process
+import android.provider.DocumentsContract
 import android.content.Intent
 import android.content.res.AssetFileDescriptor
 import android.database.Cursor
@@ -100,22 +107,72 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
     } catch (e: CancellationException) { throw OperationCanceledException() }
 
-    /** Waits (briefly) for session restore, which runs on a background thread after process start. */
-    private fun requireSignedIn() {
-        if (app.appLock.isLocked) { // opens the app, which asks to unlock
-            val ctx = context!!
-            val pi = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-            throw AuthenticationRequiredException(SecurityException("Filen Files is locked"), pi)
+    private fun authError(message: String): AuthenticationRequiredException {
+        val ctx = context!!
+        val pi = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        return AuthenticationRequiredException(SecurityException(message), pi) // userAction opens the app (lock screen / sign-in)
+    }
+
+    /**
+     * Refuses the call while the app lock is locked (opens the app, which asks to unlock), then waits briefly for the
+     * session restore that runs on a background thread after process start.
+     *
+     * [readDoc]: this is a read-only call for that document. While locked it is still answered for an app the owner
+     * allowed in Settings, and only inside the folder that app was given (see [lockedReadAllowed]).
+     * Must run on the binder thread: it reads the caller's identity.
+     */
+    private fun requireSignedIn(readDoc: String? = null) {
+        if (app.appLock.isLockedForOthers) {
+            val uid = Binder.getCallingUid(); val pid = Binder.getCallingPid()
+            if (readDoc == null) throw authError(LOCKED)
+            awaitSession()
+            if (!lockedReadAllowed(readDoc, uid, pid)) throw authError(LOCKED)
+            return
         }
+        awaitSession()
+    }
+
+    private fun awaitSession() {
         val session = app.session
         val deadline = System.currentTimeMillis() + 10_000
         while (session.state.value is FilenSession.State.Unknown && System.currentTimeMillis() < deadline) Thread.sleep(50)
-        if (session.state.value !is FilenSession.State.LoggedIn) {
-            val ctx = context!!
-            val pi = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-            throw AuthenticationRequiredException(SecurityException("Sign in to Filen"), pi)
-        }
+        if (session.state.value !is FilenSession.State.LoggedIn) throw authError("Sign in to Filen")
     }
+
+    /**
+     * Read access while locked. All of these must hold:
+     *  - the caller is not the system picker / Files app (they hold MANAGE_DOCUMENTS) - browsing stays locked;
+     *  - the caller holds a PERSISTED read grant (the owner's own picker choice) whose tree or document covers [documentId];
+     *  - the owner allowed that app ([Prefs.lockedReaders]).
+     * An app that passes the first two but isn't allowed yet is remembered, and the owner is asked once after unlocking.
+     */
+    private fun lockedReadAllowed(documentId: String, uid: Int, pid: Int): Boolean {
+        val ctx = context!!
+        if (uid == Process.myUid()) return false
+        if (ctx.checkPermission(Manifest.permission.MANAGE_DOCUMENTS, pid, uid) == PackageManager.PERMISSION_GRANTED) return false
+        val pkgs = ctx.packageManager.getPackagesForUid(uid)?.toList().orEmpty()
+        if (pkgs.isEmpty()) return false
+        val covered = ctx.contentResolver.outgoingPersistedUriPermissions.any { g ->
+            g.isReadPermission && g.uri.authority == AUTHORITY &&
+                ctx.checkUriPermission(g.uri, pid, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED &&
+                covers(g.uri, documentId)
+        }
+        if (!covered) return false
+        val prefs = app.prefs
+        if (pkgs.any { it in prefs.lockedReaders }) return true
+        pkgs.firstOrNull { it !in prefs.lockedReadersAsked }?.let { pkg ->
+            android.os.Handler(Looper.getMainLooper()).post { app.appLock.askReader = pkg }
+        }
+        return false
+    }
+
+    /** Whether a granted URI (a tree, or a single document) covers [documentId]. */
+    private fun covers(grant: Uri, documentId: String): Boolean = runCatching {
+        if (DocumentsContract.isTreeUri(grant)) {
+            val top = DocumentsContract.getTreeDocumentId(grant)
+            documentId == top || isDescendant(top, documentId)
+        } else DocumentsContract.getDocumentId(grant) == documentId
+    }.getOrDefault(false)
 
     private fun idOf(documentId: String): ItemId {
         val id = ItemId(documentId)
@@ -132,8 +189,22 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val c = MatrixCursor(projection ?: ROOT_PROJECTION)
-        val s = app.session.state.value
-        if (s !is FilenSession.State.LoggedIn || app.appLock.isLocked) return c
+        val session = app.session
+        val deadline = System.currentTimeMillis() + 10_000 // cold start: let the session restore finish first
+        while (session.state.value is FilenSession.State.Unknown && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        val s = session.state.value
+        if (s !is FilenSession.State.LoggedIn) return c
+        if (app.appLock.isLockedForOthers) {
+            // Locked: only the drive's name, so pickers still offer it. Opening it throws AuthenticationRequiredException,
+            // which the picker shows as an unlock button (our userAction); unlocking notifies the roots URI to reload.
+            // FLAG_SUPPORTS_IS_CHILD keeps it visible in folder pickers (ACTION_OPEN_DOCUMENT_TREE). No account, no search.
+            c.newRow().apply {
+                add(Root.COLUMN_ROOT_ID, "filen"); add(Root.COLUMN_DOCUMENT_ID, "filen:root")
+                add(Root.COLUMN_TITLE, "Filen Drive"); add(Root.COLUMN_ICON, R.drawable.ic_launcher)
+                add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_CREATE or Root.FLAG_SUPPORTS_IS_CHILD)
+            }
+            return c
+        }
         c.newRow().apply {
             add(Root.COLUMN_ROOT_ID, "filen"); add(Root.COLUMN_DOCUMENT_ID, "filen:root")
             add(Root.COLUMN_TITLE, "Filen Drive"); add(Root.COLUMN_SUMMARY, s.email)
@@ -196,7 +267,11 @@ class FilenDocumentsProvider : DocumentsProvider() {
             // Finished (or dismissed) meanwhile: the real file appears under its own id when the folder is listed.
             throw FileNotFoundException("$documentId is no longer pending - list the folder to find the uploaded file")
         }
-        requireSignedIn()
+        // Pickers load the root document before its children and treat any failure there as a generic error; the unlock
+        // button only appears when queryChildDocuments throws AuthenticationRequiredException. So while locked the
+        // drive's root row (name only, same row as unlocked) still answers - it is the root we list anyway.
+        if (documentId == "filen:root" && app.appLock.isLockedForOthers) { c.addRoot(documentId); return c }
+        requireSignedIn(readDoc = documentId)
         if (documentId == "filen:root" || documentId == "filen-in:root") { c.addRoot(documentId); return c }
         val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         c.addItem(item)
@@ -204,7 +279,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
-        requireSignedIn()
+        requireSignedIn(readDoc = parentDocumentId)
         val parent = idOf(parentDocumentId)
         // Offline, a fresh listing can't be fetched. Answer from the last listing we saw (if any) plus the uploads we know
         // about, so a client that just wrote a file can still see it "Waiting for network…" instead of getting an error.
@@ -238,29 +313,40 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        // The framework calls this for tree URIs before every other call; while locked only an allowed app's own folder answers.
+        if (app.appLock.isLockedForOthers) requireSignedIn(parentDocumentId)
+        return isDescendant(parentDocumentId, documentId)
+    }
+
+    /**
+     * Walks up from [documentId] until it meets [parentDocumentId] (true) or a root / unknown item (false). Parents come
+     * from listings seen in this process, the upload queue, or - after a cold start - from Filen itself, so a file several
+     * levels below a granted folder still resolves. Never checks the lock: callers do.
+     */
+    private fun isDescendant(parentDocumentId: String, documentId: String): Boolean {
         if (parentDocumentId == documentId) return false
-        var cur: String? = documentId
-        var guard = 0
-        while (cur != null && guard++ < 64) {
-            val p = parents[cur] ?: pendingParent(cur) ?: break
+        var cur = documentId
+        repeat(64) {
+            val p = parents[cur] ?: pendingParent(cur) ?: fetchParent(cur) ?: return false
             if (p == parentDocumentId) return true
             cur = p
         }
-        // Not learned from a listing yet (cold start): a folder's own breadcrumb trail tells us.
-        return runCatching {
-            val id = ItemId(documentId)
-            if (id.key == "root" || (id.scheme != "filen" && id.scheme != "filen-in")) return@runCatching false
-            requireSignedIn()
-            blocking { app.router.list(id) }.trail.any { it.id.value == parentDocumentId }
-        }.getOrDefault(false)
+        return false
     }
+
+    private fun fetchParent(documentId: String): String? = runCatching {
+        val id = ItemId(documentId)
+        if (id.key == "root" || (id.scheme != "filen" && id.scheme != "filen-in")) return@runCatching null
+        awaitSession()
+        blocking { app.filen.parentOf(id) }?.value?.also { parents[documentId] = it }
+    }.getOrNull()
 
     // ---------- reading ----------
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
         pending[documentId]?.let { return openForWrite(it, mode) }
         if (documentId.startsWith(PENDING_PREFIX)) throw java.lang.UnsupportedOperationException("This file was already written")
-        requireSignedIn()
+        requireSignedIn(readDoc = documentId.takeIf { mode == "r" }) // writes never pass while locked
         if (mode != "r") throw java.lang.UnsupportedOperationException("Existing Filen files are read-only here")
         val item = io { blocking(signal) { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         if (item.isDirectory) throw FileNotFoundException("$documentId is a folder")
@@ -350,6 +436,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     companion object {
         const val AUTHORITY = "app.filenfiles.documents"
+        private const val LOCKED = "Filen Files is locked"
         private const val PENDING_PREFIX = "filen-pending:"
         private val ROOT_PROJECTION = arrayOf(
             Root.COLUMN_ROOT_ID, Root.COLUMN_DOCUMENT_ID, Root.COLUMN_TITLE, Root.COLUMN_SUMMARY, Root.COLUMN_ICON, Root.COLUMN_FLAGS,

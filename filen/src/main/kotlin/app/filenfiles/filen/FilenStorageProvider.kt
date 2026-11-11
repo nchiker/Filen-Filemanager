@@ -359,6 +359,20 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     // ---------- stat / favorites / recents ----------
 
+    /**
+     * The folder an item lives in, asked from Filen when not cached (null for a root or an unknown item). Lets the
+     * documents provider check "is X inside the folder an app was given" after a cold start, at any depth.
+     */
+    suspend fun parentOf(id: ItemId): ItemId? = io {
+        if (id.key == ROOT) return@io null
+        if (id.scheme == P) {
+            val p = personalFiles[id.key]?.parent ?: client.getFileOptional(id.key)?.parent ?: client.getDirOptional(id.key)?.parent
+            return@io p?.let(::personalParentId)?.let(::ItemId)
+        }
+        if (sharedParents[id.value] == null) runCatching { resolveShared(id) }
+        sharedParents[id.value]?.let(::ItemId)
+    }
+
     override suspend fun stat(id: ItemId): FileItem? = io {
         if (id.scheme == P) {
             if (id.key == ROOT) return@io null
