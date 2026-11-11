@@ -24,6 +24,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Other apps (Stack) ask for a backup folder in Filen Drive; one Allow tap, no browsing. See GrantFolderActivity. -->
+        <activity
+            android:name=".GrantFolderActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FilenFiles.Dialog">
+            <intent-filter>
+                <action android:name="app.filenfiles.action.GRANT_BACKUP_FOLDER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".transfer.TransferService"
             android:exported="false"

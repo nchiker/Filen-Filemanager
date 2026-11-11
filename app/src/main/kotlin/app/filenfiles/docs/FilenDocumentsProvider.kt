@@ -117,16 +117,17 @@ class FilenDocumentsProvider : DocumentsProvider() {
      * Refuses the call while the app lock is locked (opens the app, which asks to unlock), then waits briefly for the
      * session restore that runs on a background thread after process start.
      *
-     * [readDoc]: this is a read-only call for that document. While locked it is still answered for an app the owner
-     * allowed in Settings, and only inside the folder that app was given (see [lockedReadAllowed]).
+     * [doc]: the call only touches that document (or, for a create, that folder). While locked it is still answered for
+     * an app the owner allowed, and only inside the folder that app was given (see [lockedAccessAllowed]); [write] calls
+     * (create a file, delete) only for an app that got its folder through GrantFolderActivity.
      * Must run on the binder thread: it reads the caller's identity.
      */
-    private fun requireSignedIn(readDoc: String? = null) {
+    private fun requireSignedIn(doc: String? = null, write: Boolean = false) {
         if (app.appLock.isLockedForOthers) {
             val uid = Binder.getCallingUid(); val pid = Binder.getCallingPid()
-            if (readDoc == null) throw authError(LOCKED)
+            if (doc == null) throw authError(LOCKED)
             awaitSession()
-            if (!lockedReadAllowed(readDoc, uid, pid)) throw authError(LOCKED)
+            if (!lockedAccessAllowed(doc, uid, pid, write)) throw authError(LOCKED)
             return
         }
         awaitSession()
@@ -140,25 +141,29 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     /**
-     * Read access while locked. All of these must hold:
+     * Access while locked. All of these must hold:
      *  - the caller is not the system picker / Files app (they hold MANAGE_DOCUMENTS) - browsing stays locked;
-     *  - the caller holds a PERSISTED read grant (the owner's own picker choice) whose tree or document covers [documentId];
-     *  - the owner allowed that app ([Prefs.lockedReaders]).
-     * An app that passes the first two but isn't allowed yet is remembered, and the owner is asked once after unlocking.
+     *  - the caller holds a PERSISTED grant (read, or write for [write]) whose tree or document covers [documentId] -
+     *    from the owner's own picker choice or GrantFolderActivity;
+     *  - the owner allowed that app ([Prefs.lockedReaders]); for [write] it also got its folder from GrantFolderActivity
+     *    ([Prefs.lockedWriters]).
+     * A reader that passes the first two but isn't allowed yet is remembered, and the owner is asked once after unlocking.
      */
-    private fun lockedReadAllowed(documentId: String, uid: Int, pid: Int): Boolean {
+    private fun lockedAccessAllowed(documentId: String, uid: Int, pid: Int, write: Boolean): Boolean {
         val ctx = context!!
         if (uid == Process.myUid()) return false
         if (ctx.checkPermission(Manifest.permission.MANAGE_DOCUMENTS, pid, uid) == PackageManager.PERMISSION_GRANTED) return false
         val pkgs = ctx.packageManager.getPackagesForUid(uid)?.toList().orEmpty()
         if (pkgs.isEmpty()) return false
+        val mode = if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else Intent.FLAG_GRANT_READ_URI_PERMISSION
         val covered = ctx.contentResolver.outgoingPersistedUriPermissions.any { g ->
-            g.isReadPermission && g.uri.authority == AUTHORITY &&
-                ctx.checkUriPermission(g.uri, pid, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED &&
+            (if (write) g.isWritePermission else g.isReadPermission) && g.uri.authority == AUTHORITY &&
+                ctx.checkUriPermission(g.uri, pid, uid, mode) == PackageManager.PERMISSION_GRANTED &&
                 covers(g.uri, documentId)
         }
         if (!covered) return false
         val prefs = app.prefs
+        if (write) return pkgs.any { it in prefs.lockedReaders && it in prefs.lockedWriters }
         if (pkgs.any { it in prefs.lockedReaders }) return true
         pkgs.firstOrNull { it !in prefs.lockedReadersAsked }?.let { pkg ->
             android.os.Handler(Looper.getMainLooper()).post { app.appLock.askReader = pkg }
@@ -271,7 +276,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         // button only appears when queryChildDocuments throws AuthenticationRequiredException. So while locked the
         // drive's root row (name only, same row as unlocked) still answers - it is the root we list anyway.
         if (documentId == "filen:root" && app.appLock.isLockedForOthers) { c.addRoot(documentId); return c }
-        requireSignedIn(readDoc = documentId)
+        requireSignedIn(doc = documentId)
         if (documentId == "filen:root" || documentId == "filen-in:root") { c.addRoot(documentId); return c }
         val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         c.addItem(item)
@@ -279,7 +284,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
-        requireSignedIn(readDoc = parentDocumentId)
+        requireSignedIn(doc = parentDocumentId)
         val parent = idOf(parentDocumentId)
         // Offline, a fresh listing can't be fetched. Answer from the last listing we saw (if any) plus the uploads we know
         // about, so a client that just wrote a file can still see it "Waiting for network…" instead of getting an error.
@@ -346,7 +351,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
         pending[documentId]?.let { return openForWrite(it, mode) }
         if (documentId.startsWith(PENDING_PREFIX)) throw java.lang.UnsupportedOperationException("This file was already written")
-        requireSignedIn(readDoc = documentId.takeIf { mode == "r" }) // writes never pass while locked
+        requireSignedIn(doc = documentId.takeIf { mode == "r" }) // writes never pass while locked
         if (mode != "r") throw java.lang.UnsupportedOperationException("Existing Filen files are read-only here")
         val item = io { blocking(signal) { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         if (item.isDirectory) throw FileNotFoundException("$documentId is a folder")
@@ -365,7 +370,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
     // ---------- writing ----------
 
     override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
-        requireSignedIn()
+        // While locked only an app that got this folder from GrantFolderActivity may add FILES to it (no folders).
+        requireSignedIn(doc = parentDocumentId.takeIf { mimeType != Document.MIME_TYPE_DIR }, write = true)
         val parent = idOf(parentDocumentId)
         val w = app.router.writable(parent)?.takeIf { it.canWrite(parent) } ?: throw SecurityException("This folder is read-only")
         if (displayName.isBlank() || '/' in displayName) throw IllegalArgumentException("Invalid name")
@@ -400,7 +406,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun deleteDocument(documentId: String) {
-        requireSignedIn()
+        requireSignedIn(doc = documentId, write = true) // to the Filen trash; while locked only for a GrantFolderActivity app
         pending.remove(documentId)?.let { it.dir.deleteRecursively(); return }
         app.transfers.byDocId(documentId)?.let { t -> app.transfers.cancel(t.id); app.transfers.dismiss(t.id); notifyParent(t.parent.value); return }
         val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)

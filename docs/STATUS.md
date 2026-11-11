@@ -274,3 +274,20 @@ maintainer's private notes file (`docs/PRIVATE_NOTES.md`, gitignored, not publis
 Done on a physical Android 13 arm64 phone with a live Filen account. Use cheaper subagents for device runs; follow the
 privacy rules in the private notes if present (don't open personal files, no addresses/filenames in reports, never sign out).
 The debug-only `DebugUploadReceiver` seeds a Drive folder from a local dir (see README); logcat tags: `FilenPerf`, `FilenDebug`.
+
+## Backup folder for other apps (0.4.2, versionCode 8)
+- `GrantFolderActivity`, action `app.filenfiles.action.GRANT_BACKUP_FOLDER` (asked for by Stack, `org.stackdocs.app`): the caller uses
+  startActivityForResult, optional `app.filenfiles.extra.FOLDER_NAME` (default "<label> backups"). One dialog with the caller's real
+  label/icon (PackageManager via getCallingPackage, never extras); unlock first if the app lock is locked. Allow → top-level Filen
+  Drive folder reused by name or created → RESULT_OK with the tree URI + READ|WRITE|PERSISTABLE|PREFIX (the caller takes the
+  persistable permission). Cancel → `app.filenfiles.extra.ERROR` = not_signed_in | offline | user_cancelled | no_caller | failed
+  (+ `app.filenfiles.extra.MESSAGE`).
+- Allow also adds the app to `lockedReaders` + `lockedWriters`: while locked it may list/read and create FILES / delete (Filen trash)
+  inside that tree (persisted WRITE grant required). Rename/move/new folder stay refused while locked. One Settings switch per app.
+- Uploads from a background provider call fall back to the WorkManager job when Android refuses the foreground service.
+- Device-tested 2026-11-11 on the Pixel 4a with Stack: (a) dialog with Stack's real label, owner unlocked + Allow, persistable
+  READ|WRITE tree grant taken, 217 MB first backup uploaded; (b) second Allow returned the same folder (no duplicate);
+  (c) unattended weekly job with Filen Files cold + locked: Android refused the upload foreground service, the WorkManager
+  fallback uploaded the new backup, Stack's pruning deleted an old Stack-auto-* file to the trash, no lock refusals.
+- **Stack depends on this** (GRANT_BACKUP_FOLDER + the locked-writer allowance, from 0.4.2 on); Stack falls back to the system
+  folder picker when the action is missing. Don't rename the action/extras or narrow the writer allowance without telling Stack.

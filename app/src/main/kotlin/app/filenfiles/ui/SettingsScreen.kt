@@ -105,7 +105,9 @@ fun SettingsScreen(env: AppEnv) {
             }
             if (prefs.appLock) items(prefs.lockedReadersAsked.sorted()) { pkg ->
                 val name = prefs.lockedReaderLabel(pkg) ?: appLabel(ctx, pkg)
-                SwitchRow("$name can read while locked", "Only the Filen folder you gave $name", pkg in prefs.lockedReaders) {
+                val writes = pkg in prefs.lockedWriters
+                SwitchRow(if (writes) "$name can back up while locked" else "$name can read while locked",
+                    if (writes) "Only its backup folder in Filen Drive" else "Only the Filen folder you gave $name", pkg in prefs.lockedReaders) {
                     prefs.setLockedReader(pkg, it)
                 }
             }

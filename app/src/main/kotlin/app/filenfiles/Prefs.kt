@@ -50,6 +50,16 @@ class Prefs(context: Context) {
         sp.edit().putStringSet("lockedReaders", lockedReaders).putStringSet("lockedReadersAsked", lockedReadersAsked)
             .apply { if (label != null) putString("readerLabel:$pkg", label) }.apply()
     }
+    /**
+     * Packages that got a backup folder through GrantFolderActivity: while locked they may also create files in and
+     * delete from that folder (only while they are in [lockedReaders] too - the Settings switch turns both off).
+     */
+    var lockedWriters by mutableStateOf(sp.getStringSet("lockedWriters", null)?.toSet() ?: emptySet()); private set
+    fun grantBackupWriter(pkg: String, label: String) {
+        lockedWriters = lockedWriters + pkg
+        sp.edit().putStringSet("lockedWriters", lockedWriters).apply()
+        setLockedReader(pkg, true, label)
+    }
     /** The name saved when the owner was asked (Android may hide other apps' names later). */
     fun lockedReaderLabel(pkg: String): String? = sp.getString("readerLabel:$pkg", null)
     fun updateAutoUpdateCheck(v: Boolean) { autoUpdateCheck = v; sp.edit().putBoolean("autoUpdateCheck", v).apply() }

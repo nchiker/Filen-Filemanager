@@ -2,4 +2,9 @@
     <style name="Theme.FilenFiles" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowLightStatusBar">false</item>
     </style>
+    <!-- GrantFolderActivity: only its dialog shows, over the calling app. -->
+    <style name="Theme.FilenFiles.Dialog" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
 </resources>
