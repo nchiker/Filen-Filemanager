@@ -291,3 +291,15 @@ The debug-only `DebugUploadReceiver` seeds a Drive folder from a local dir (see 
   fallback uploaded the new backup, Stack's pruning deleted an old Stack-auto-* file to the trash, no lock refusals.
 - **Stack depends on this** (GRANT_BACKUP_FOLDER + the locked-writer allowance, from 0.4.2 on); Stack falls back to the system
   folder picker when the action is missing. Don't rename the action/extras or narrow the writer allowance without telling Stack.
+
+## Stack look, round 2 (0.4.3, versionCode 9 - not released)
+Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). Owner chose to KEEP dark mode (same layout).
+- `ui/StackUi.kt`: `Rings` (Stack pastels + soft settings set), `RingBadge`, `ActionRow` (56dp ring badge, 16/13sp, chevron),
+  `RowDivider` (#EEEEEE), `TextLink`, `StackSectionHeader` (14sp medium + blue text action), `StackDialog` (8dp, 20sp title),
+  `DialogSwitch` / `DialogChoice`, `TightText` (no font padding).
+- Settings = six action rows that open small dialogs (App lock, Camera backup, Free up space, Trash, Theme, Update check) +
+  "About Filen Files" link. No inline switches on the list.
+- Home: search bar 52dp / 8dp corners / #E8EAED outline; 14sp ink headers; "Layout" text action; new default storage style
+  RINGS (74dp rings, line icons, 4 per row; applied once to existing users via `ringsDefaultApplied`).
+- Theme: letterSpacing 0 everywhere, headlineSmall 20sp (dialog titles), shapes.extraLarge 8dp. Toolbar 56dp / 18sp title.
+  Bottom nav: outline icons, 14sp labels, 1dp top divider.

@@ -13,7 +13,7 @@ enum class SortKey { NAME, DATE, SIZE }
 enum class ThemeMode(val label: String) { SYSTEM("Follow the system"), LIGHT("Light"), DARK("Dark") }
 
 /** How the Storage shortcuts on Home are drawn; tapping the toggle cycles through them. */
-enum class StorageStyle(val label: String) { CARDS("Large cards"), COMPACT("Icons with text"), ICONS("Icons only"), TEXT("Text only") }
+enum class StorageStyle(val label: String) { RINGS("Rings"), CARDS("Large cards"), COMPACT("Icons with text"), ICONS("Icons only"), TEXT("Text only") }
 
 /** View + sort + favorites, persisted in SharedPreferences. Observable through Compose state. */
 class Prefs(context: Context) {
@@ -25,7 +25,10 @@ class Prefs(context: Context) {
     var skippedLogin by mutableStateOf(sp.getBoolean("skippedLogin", false)); private set
     fun skipLogin() { skippedLogin = true; sp.edit().putBoolean("skippedLogin", true).apply() }
     var favorites by mutableStateOf(loadFavorites()); private set
-    var storageStyle by mutableStateOf(runCatching { StorageStyle.valueOf(sp.getString("storageStyle", null)!!) }.getOrDefault(StorageStyle.COMPACT)); private set
+    // 0.4.3 (Stack look): everyone starts on Stack's ring tiles once; the Layout button still cycles the other styles.
+    var storageStyle by mutableStateOf(
+        if (!sp.getBoolean("ringsDefaultApplied", false)) { sp.edit().putBoolean("ringsDefaultApplied", true).putString("storageStyle", StorageStyle.RINGS.name).apply(); StorageStyle.RINGS }
+        else runCatching { StorageStyle.valueOf(sp.getString("storageStyle", null)!!) }.getOrDefault(StorageStyle.RINGS)); private set
     var themeMode by mutableStateOf(runCatching { ThemeMode.valueOf(sp.getString("themeMode", null)!!) }.getOrDefault(ThemeMode.SYSTEM)); private set
     fun updateThemeMode(m: ThemeMode) { themeMode = m; sp.edit().putString("themeMode", m.name).apply() }
     // ---- security / updates ----

@@ -4,6 +4,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
@@ -28,10 +30,10 @@ import kotlinx.coroutines.launch
 private data class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 private val tabs = listOf(
-    Tab("home", "Home", Icons.Filled.Home),
-    Tab("files", "Files", Icons.Filled.Folder),
-    Tab("shared", "Shared", Icons.Filled.People),
-    Tab("favorites", "Favorites", Icons.Filled.Star),
+    Tab("home", "Home", Icons.Outlined.Home),
+    Tab("files", "Files", Icons.Outlined.Folder),
+    Tab("shared", "Shared", Icons.Outlined.People),
+    Tab("favorites", "Favorites", Icons.Outlined.StarOutline),
 )
 
 fun folderRoute(id: ItemId) = "folder/${Uri.encode(id.value)}"
@@ -141,6 +143,7 @@ fun AppRoot(app: FilesApp) {
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = { Column {
             TransfersPanel(env, padForNavBar = !showBar)
+            if (showBar) RowDivider() // Stack: white bar with a 1dp top line, outline icons over 14sp labels
             if (showBar) NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 tabs.forEach { t ->
                     NavigationBarItem(
@@ -151,7 +154,7 @@ fun AppRoot(app: FilesApp) {
                                 launchSingleTop = true; restoreState = true
                             }
                         },
-                        icon = { Icon(t.icon, t.label) }, label = { Text(t.label) },
+                        icon = { Icon(t.icon, t.label, Modifier.size(24.dp)) }, label = { Text(t.label, fontSize = 14.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary,
                             indicatorColor = androidx.compose.ui.graphics.Color.Transparent,

@@ -3,7 +3,11 @@ package app.filenfiles.ui
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** Same palette as the Stack app: white paper, ink text, one Google-blue accent, hairline #DADCE0 outlines. */
 object StackColors {
@@ -46,8 +50,27 @@ private val Dark = darkColorScheme(
     error = Color(0xFFF28B82),
 )
 
+/**
+ * Stack uses plain TextViews: no extra letter spacing anywhere (M3 adds 0.15-0.5sp). Dialog titles (headlineSmall)
+ * are 20sp regular like Stack's dialogs.
+ */
+private val StackType = Typography().run {
+    fun androidx.compose.ui.text.TextStyle.flat() = copy(letterSpacing = 0.sp)
+    Typography(
+        displayLarge = displayLarge.flat(), displayMedium = displayMedium.flat(), displaySmall = displaySmall.flat(),
+        headlineLarge = headlineLarge.flat(), headlineMedium = headlineMedium.flat(),
+        headlineSmall = headlineSmall.copy(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.sp),
+        titleLarge = titleLarge.flat(), titleMedium = titleMedium.flat(), titleSmall = titleSmall.flat(),
+        bodyLarge = bodyLarge.flat(), bodyMedium = bodyMedium.flat(), bodySmall = bodySmall.flat(),
+        labelLarge = labelLarge.flat(), labelMedium = labelMedium.flat(), labelSmall = labelSmall.flat(),
+    )
+}
+
+/** Dialogs (shapes.extraLarge) get Stack's 8dp corners, the same as the search bar. */
+private val StackShapes = Shapes(extraLarge = RoundedCornerShape(8.dp))
+
 /** Fixed Stack palette (no wallpaper-derived colours), light or dark following the system. */
 @Composable
 fun FilesTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
+    MaterialTheme(colorScheme = if (dark) Dark else Light, typography = StackType, shapes = StackShapes, content = content)
 }

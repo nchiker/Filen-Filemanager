@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -25,11 +26,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import app.filenfiles.core.FileItem
@@ -48,8 +51,10 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppBar(title: String, actions: @Composable RowScope.() -> Unit = {}, onBack: (() -> Unit)? = null) {
+    // Stack's toolbar: 56dp, no elevation, muted 48dp back button, 18sp regular title right after it.
     TopAppBar(
-        title = { Text(title, maxLines = 1) },
+        title = { Text(title, maxLines = 1, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal) },
+        expandedHeight = 56.dp,
         navigationIcon = { if (onBack != null) IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
         actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.onSurface,
@@ -117,13 +122,15 @@ fun AccountAction(env: AppEnv, modifier: Modifier = Modifier) {
     )
 }
 
-/** Stack's home header: one raised white pill - search icon, hint, settings, and the account avatar. */
+/** Stack's home header: one raised white search bar - search icon, hint, settings, and the account avatar. */
 @Composable
 private fun StackSearchBar(env: AppEnv) {
     Surface(
-        Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth().height(56.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 4.dp, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        // Stack (MainActivity): white, 8dp corners, 1dp #E8EAED outline, 2dp elevation, about 52dp tall.
+        Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp).fillMaxWidth().height(52.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp, border = androidx.compose.foundation.BorderStroke(1.dp,
+            if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) MaterialTheme.colorScheme.outline else androidx.compose.ui.graphics.Color(0xFFE8EAED)),
     ) {
         Row(Modifier.clickable { env.nav.navigate("search") }.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -223,19 +230,10 @@ fun HomeScreen(env: AppEnv) {
                 }
             }
             item {
-                val style = env.app.prefs.storageStyle
-                Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { SectionTitle("Storage") }
-                    IconButton({ env.app.prefs.cycleStorageStyle() }, Modifier.size(40.dp)) {
-                        // Shows the layout that tapping switches TO, described for accessibility.
-                        val next = StorageStyle.entries[(style.ordinal + 1) % StorageStyle.entries.size]
-                        Icon(when (style) {
-                            StorageStyle.CARDS -> Icons.Filled.ViewAgenda
-                            StorageStyle.COMPACT -> Icons.Filled.Apps
-                            StorageStyle.ICONS -> Icons.Filled.TextFields
-                            StorageStyle.TEXT -> Icons.Filled.GridView
-                        }, "Storage layout: ${style.label}. Tap for ${next.label}", Modifier.size(20.dp))
-                    }
+                // Stack: 14sp medium ink header with a blue text action on the right ("Edit" there, "Layout" here:
+                // cycles Rings / Large cards / Icons with text / Icons only / Text only).
+                StackSectionHeader("Storage", Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), action = "Layout") {
+                    env.app.prefs.cycleStorageStyle()
                 }
             }
             item {
@@ -249,10 +247,11 @@ fun HomeScreen(env: AppEnv) {
             // Same component, same layout toggle as the storages above, so they always look like part of the page.
             item { SectionTitle("Tools") }
             item {
+                // Ring colours continue after the storages, so every tile on the page keeps a stable colour of its own.
                 StorageShortcuts(env.app.prefs.storageStyle, listOfNotNull(
-                    Shortcut("tool:cleanup", "Free up space", Icons.Filled.CleaningServices) { env.nav.navigate("cleanup") },
-                    if (signedIn) Shortcut("tool:trash", "Trash", Icons.Filled.Delete) { env.nav.navigate("trash") } else null,
-                ))
+                    Shortcut("tool:cleanup", "Free up space", Icons.Outlined.CleaningServices) { env.nav.navigate("cleanup") },
+                    if (signedIn) Shortcut("tool:trash", "Trash", Icons.Outlined.Delete) { env.nav.navigate("trash") } else null,
+                ), ringOffset = (roots as? Load.Ok)?.value?.size ?: 0)
             }
             val fv = (favs as? Load.Ok)?.value.orEmpty()
             if (fv.isNotEmpty()) {
@@ -274,10 +273,11 @@ fun HomeScreen(env: AppEnv) {
     }
 }
 
+/** Stack's section header: 14sp medium ink (was a blue Material title). */
 @Composable
 fun SectionTitle(t: String) =
-    Text(t, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
+    Text(t, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
 
 /** One tile on Home: a storage, or a tool such as Free up space. Drawn in whichever layout the user picked. */
 class Shortcut(val key: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val onClick: () -> Unit)
@@ -285,8 +285,29 @@ class Shortcut(val key: String, val label: String, val icon: androidx.compose.ui
 /** The Home shortcuts, wrapped (never scrolled sideways) in the chosen density. */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun StorageShortcuts(style: StorageStyle, items: List<Shortcut>) {
+private fun StorageShortcuts(style: StorageStyle, items: List<Shortcut>, ringOffset: Int = 0) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    if (style == StorageStyle.RINGS) {
+        // Stack's Home grid: 4 per row, 74dp circle with a 3dp pastel ring, 30dp ink icon, 16sp label below (2 lines max).
+        FlowRow(Modifier.padding(horizontal = 12.dp), maxItemsInEachRow = 4, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items.forEachIndexed { i, f ->
+                key(f.key) {
+                    Column(
+                        Modifier.weight(1f).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).clickable(onClick = f.onClick)
+                            .padding(vertical = 6.dp).semantics(mergeDescendants = true) { },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        RingBadge(f.icon, Rings.at(ringOffset + i), size = 74.dp)
+                        Text(f.label, Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp), fontSize = 16.sp, maxLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface, lineHeight = 20.sp)
+                    }
+                }
+            }
+            repeat((4 - items.size % 4) % 4) { Spacer(Modifier.weight(1f)) }
+        }
+        return
+    }
     FlowRow(
         Modifier.padding(horizontal = 12.dp),
         maxItemsInEachRow = if (style == StorageStyle.CARDS) 3 else Int.MAX_VALUE,
@@ -296,6 +317,7 @@ private fun StorageShortcuts(style: StorageStyle, items: List<Shortcut>) {
         items.forEach { f ->
             key(f.key) {
                 when (style) {
+                    StorageStyle.RINGS -> Unit // drawn above
                     StorageStyle.CARDS -> ShortcutCard(f, Modifier.weight(1f))
                     StorageStyle.COMPACT -> AssistChip(
                         f.onClick, { Text(f.label, maxLines = 1) },
@@ -332,17 +354,18 @@ private fun ShortcutCard(f: Shortcut, modifier: Modifier = Modifier) {
     }
 }
 
-private fun rootIcon(f: Folder) = when {
-    f.origin == Origin.FILEN_PERSONAL -> Icons.Filled.Cloud
-    f.origin == Origin.FILEN_SHARED_WITH_ME -> Icons.Filled.People
-    f.origin == Origin.FILEN_SHARED_BY_ME -> Icons.Filled.Share
-    f.origin == Origin.EXTERNAL -> Icons.Filled.CloudQueue
-    f.name == "Downloads" -> Icons.Filled.Download
-    f.name == "Pictures" || f.name == "Camera" -> Icons.Filled.Image
-    f.name == "Music" -> Icons.Filled.AudioFile
-    f.name == "Movies" -> Icons.Filled.VideoFile
-    f.name == "Documents" -> Icons.Filled.Description
-    else -> Icons.Filled.PhoneAndroid
+private fun rootIcon(f: Folder) = when { // line icons, like Stack's tiles
+    f.origin == Origin.FILEN_PERSONAL -> Icons.Outlined.Cloud
+    f.origin == Origin.FILEN_SHARED_WITH_ME -> Icons.Outlined.People
+    f.origin == Origin.FILEN_SHARED_BY_ME -> Icons.Outlined.Share
+    f.origin == Origin.EXTERNAL -> Icons.Outlined.CloudQueue
+    f.name == "Downloads" -> Icons.Outlined.Download
+    f.name == "Camera" -> Icons.Outlined.PhotoCamera
+    f.name == "Pictures" -> Icons.Outlined.Image
+    f.name == "Music" -> Icons.Outlined.AudioFile
+    f.name == "Movies" -> Icons.Outlined.VideoFile
+    f.name == "Documents" -> Icons.Outlined.Description
+    else -> Icons.Outlined.PhoneAndroid
 }
 
 @Composable
