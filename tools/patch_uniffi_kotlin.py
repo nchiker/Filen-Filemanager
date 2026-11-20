@@ -11,6 +11,20 @@ import re, sys, pathlib
 SEALED = re.compile(r"^sealed class (\w+)[^\n]*\{\n(.*?)^\}\n", re.S | re.M)
 VARIANT = re.compile(r"data class (\w+)\(([^)]*)\)")
 
+AUTOCLOSE = "    @Synchronized\n    override fun close() {\n        this.destroy()\n    }\n\n"
+
+def drop_clashing_close(src: str) -> str:
+    """A Rust object with its own `close()` method (ArchiveReader) clashes with the generated
+    AutoCloseable.close() override. Drop the generated one; the Rust `close` satisfies AutoCloseable
+    and the pointer is still freed by destroy() / the cleaner."""
+    parts = re.split(r"(?m)^(?=open class \w+: Disposable)", src)
+    out = [parts[0]]
+    for part in parts[1:]:
+        if "override fun `close`()" in part:
+            part = part.replace(AUTOCLOSE, "", 1)
+        out.append(part)
+    return "".join(out)
+
 def patch(path: pathlib.Path) -> int:
     src = path.read_text()
     pkg = re.search(r"^package ([\w.]+)", src, re.M).group(1)
@@ -36,6 +50,7 @@ def patch(path: pathlib.Path) -> int:
         return m.group(0).replace(body, VARIANT.sub(fix_variant, body), 1)
 
     out = SEALED.sub(fix_block, src)
+    out = drop_clashing_close(out)
     path.write_text(out)
     return n
 

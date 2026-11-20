@@ -303,3 +303,17 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
   RINGS (74dp rings, line icons, 4 per row; applied once to existing users via `ringsDefaultApplied`).
 - Theme: letterSpacing 0 everywhere, headlineSmall 20sp (dialog titles), shapes.extraLarge 8dp. Toolbar 56dp / 18sp title.
   Bottom nav: outline icons, 14sp labels, 1dp top divider.
+
+## SDK bump to filen-sdk-rs 0.5.33 (0.4.4, versionCode 10 - not released)
+- `external/filen-rs` moved from 0.5.21 to 0.5.33 (`eb93d28`, 2026-11-19); `libfilen_sdk_rs.so` 36.5 -> 39.4 MB (arm64). Brings ICO/APNG
+  thumbnails (thumbnails are requested for any `image/*` MIME, so nothing app-side gates them) and the webpki-roots/rustls-webpki update.
+- The SDK's `archive` feature is a default feature, so `build-rust.sh` already builds it: `ArchiveReader` / `openArchiveReader` and the
+  `ListUpdate.reading` field are in the generated Kotlin but NOT used yet (see ROADMAP: archive browser).
+- `tools/patch_uniffi_kotlin.py` now also drops the generated `AutoCloseable.close()` override on classes that have their own Rust
+  `close()` method (ArchiveReader); without it the bindings fail with CONFLICTING_OVERLOADS.
+- Checked: unit tests (:core :filen :app), R8 release build, debug build on the test phone (login kept, browse, search crawl, Filen
+  thumbnails written). Seeded a PNG, an ICO and an APNG into the Drive: all three got correct 128px thumbnails (ICO/APNG are new in
+  this SDK), upload worked, and the downloaded PNG was md5-identical. NOT checked on a device: the R8 release APK at runtime
+  (a release-signed install would need an uninstall).
+- Android's official app only moved to 0.5.32 (0.5.33 was web/desktop); if 0.5.33 misbehaves on a device, 0.5.32 is the known-good fallback.
+

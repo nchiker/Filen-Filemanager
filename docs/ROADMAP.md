@@ -23,6 +23,9 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 
 ## Roadmap
 - One-way scheduled folder sync (upload or download) - L.
+- Archive browser on the SDK's `ArchiveReader` (already in the bindings since SDK 0.5.33): browse/open single entries of Filen-hosted
+  ZIP, 7z, RAR, TAR without downloading the archive; `ListUpdate.reading` gives a provisional row while a big entry decodes. Filen-only
+  fast path beside the generic zip browser. - M.
 - Camera backup via content trigger instead of the 30-minute poll - S.
 - Nearby handoff through the Android share sheet / Quick Share - S.
 - Home-screen shortcuts and widgets (Upload, Back up now) - S/M.
