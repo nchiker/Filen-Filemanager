@@ -313,7 +313,9 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
   `close()` method (ArchiveReader); without it the bindings fail with CONFLICTING_OVERLOADS.
 - Checked: unit tests (:core :filen :app), R8 release build, debug build on the test phone (login kept, browse, search crawl, Filen
   thumbnails written). Seeded a PNG, an ICO and an APNG into the Drive: all three got correct 128px thumbnails (ICO/APNG are new in
-  this SDK), upload worked, and the downloaded PNG was md5-identical. NOT checked on a device: the R8 release APK at runtime
-  (a release-signed install would need an uninstall).
+  this SDK), upload worked, and the downloaded PNG was md5-identical. The R8 release APK (signed with ~/APK-Keys/filen) was then
+  installed on the test phone (uninstalling the debug build first; the phone now carries the release key): sign-in, Drive listing and
+  opening a downloaded image work, no reflection/JNA crashes. Release thumbnails were not inspected (release builds aren't debuggable,
+  so the cache can't be read with run-as).
 - Android's official app only moved to 0.5.32 (0.5.33 was web/desktop); if 0.5.33 misbehaves on a device, 0.5.32 is the known-good fallback.
 
