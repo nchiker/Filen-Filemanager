@@ -116,7 +116,7 @@ fun LinkDialog(env: AppEnv, item: FileItem, onClose: () -> Unit, onChanged: () -
         dismissButton = {
             Row {
                 if (info != null) TextButton({
-                    act { links!!.removeLink(item); info = null; password = ""; env.snackbar.showSnackbar("Public link removed") }
+                    act { links!!.removeLink(item); info = null; password = ""; env.app.appScope.launch { env.snackbar.showSnackbar("Public link removed") } } // showSnackbar suspends until it is gone: don't keep the dialog busy meanwhile
                 }, enabled = !busy) { Text("Remove link", color = MaterialTheme.colorScheme.error) }
                 TextButton(onClose, enabled = !busy) { Text("Close") }
             }

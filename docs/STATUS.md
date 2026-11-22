@@ -418,3 +418,18 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
 - **Public links need a paid Filen plan (confirmed 2026-11-22):** the Filen web app gives the same "upgrade your account" answer for this account, so the app's
   message is correct and nothing is broken. The feature stays built but UNVERIFIED (URL key strings not checked in a browser) and should not be released as
   "working" until it has been tried once on a plan that includes links.
+
+## Device results, 2026-11-22 (evening): public links and in-app updater
+- **Public links (paid plan now on the account): VERIFIED.** A link made in the app for a synthetic file opens in a private browser window without a Filen
+  login (owner checked): the URL format and both keys (`DecryptedFileMeta.key`, `DirPublicLinkRw.linkKey` for folders - folders themselves not exercised)
+  are right. On the phone (release build): dialog defaults (1 week, no password, downloads on), Create, URL line, Links screen with expiry, Save with a
+  password + 1 day (URL unchanged, lock icon), "Remove the password", Remove link (Links screen empty); logcat clean and never contains `app.filen.io`.
+  Not exercised: a folder link, the Copy toast (could not be seen in a dump), opening a password-protected link in a browser, a link with downloads off.
+  Fixed afterwards: the dialog stayed busy until the "Public link removed" snackbar timed out.
+- **In-app updater: VERIFIED on the phone.** 0.4.5 (code 11) -> throwaway GitHub release v0.4.6 (code 12; public ~3 min, then deleted with its tag; `latest` is
+  v0.4.5 again): Settings > Check now and the Home banner both offered it, Update downloaded (progress shown, SHA-256 digest from GitHub), Install opened
+  Android's "install unknown apps" page for Filen Files (switched on for the test, reset to default afterwards), "Do you want to update this app?" and a Play
+  Protect "App scan recommended" screen ("Install without scanning" is a link under "More details"); login and data kept. Not tested: a failed signature
+  check, a dropped connection mid-download.
+- **The test phone now runs 0.4.6 (versionCode 12) from the throwaway build, so the next real release must use versionCode >= 13** (Android refuses downgrades;
+  main still says 0.4.5 / 11). The Drive test folder "Filen Files link test (safe to delete)" is still in the owner's Drive.

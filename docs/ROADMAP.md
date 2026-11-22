@@ -17,7 +17,7 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 1. ~~**Offline pinning**~~ - built (personal drive), awaiting device check; see STATUS.
 2. **Built-in video/audio and text viewers** (Media3 over the materialised file) - M. Removes the Open With bounce for common types.
 3. ~~**Search filters** (type, date, size, source)~~ - built, awaiting device check.
-4. **Public links** (create, copy, revoke) - M. BUILT after 0.4.5 (see STATUS), awaiting device + browser check. Checked 2026-11-22: the SDK bindings expose `publicLinkFile`/`publicLinkDir`, `get*LinkStatus`,
+4. **Public links** (create, copy, revoke) - M. BUILT after 0.4.5 and device/browser-verified for files (see STATUS); needs a paid Filen plan. Checked 2026-11-22: the SDK bindings expose `publicLinkFile`/`publicLinkDir`, `get*LinkStatus`,
    `update*Link`, `remove*Link` with an optional password, expiry presets (1 h .. 30 days / never) and a download switch. No ready-made share URL
    seen. **URL format verified 2026-11-22** from the official CLI source (`external/filen-rs/filen-cli/src/commands/public_links_cmds.rs`, with
    golden test strings): file link `https://app.filen.io/#/d/<link uuid>%23<hex of the file's key string>`, folder link
