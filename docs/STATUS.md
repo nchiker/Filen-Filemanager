@@ -370,3 +370,13 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
   follows add/remove/trash, web edit re-download, local rename (no download), unpin offline, unpin vs. a pinned folder, deleted-in-Filen orphan, failed /
   wrong-size / low-space downloads, pin during a running sync, sign-out during a sync, other account, stray sweep, folder size. They do not cover the UI,
   WorkManager scheduling, Open With / FileProvider or real SDK behaviour (those still need the device).
+- **Device-tested 2026-11-22** (Pixel 4a test phone, release-signed 0.4.4 built from the working tree and installed over the existing app, login kept;
+  a Sonnet agent drove the UI, Stack session coordinated the phone): quota bar on Home and Settings (value not compared with the web app), search
+  filter chips (Type: Images, Size: Over 100 MB -> empty state with filters, Clear filters), pin a single file and a folder (dialog with size and privacy
+  text, badge within seconds, Home > Tools > Offline lists 4 files / total size / pinned folder), png and pdf open from the Offline screen both online
+  and on a COLD START IN AIRPLANE MODE, Open With chooser on a pinned file, multi-select entry, removing the single pin keeps files held by the folder,
+  removing the folder pin empties the Offline list and clears the badges, no crashes in logcat, `PinSyncWorker` runs finish with SUCCESS.
+  Test data: synthetic files in the Drive folder "Filen Files pin test (safe to delete)" (owner deletes it). The notification permission prompt was answered
+  "Don't allow" (change in Android settings if wanted).
+  Still NOT tested on a device: edit/rename/delete on the web while pinned, sign-out wipe (never signed out), periodic 12 h sync, multi-GB folders,
+  unpin while offline, DocumentsProvider reads of pinned files, quota value vs. the web app, date/size filter results with real data.
