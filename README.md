@@ -21,7 +21,7 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
 
 ## What works
 
-- **Home** – Stack-style search bar, storage shortcuts, a *Tools* section (Free up space, Trash) that follows the same
+- **Home** – Stack-style search bar, storage shortcuts, a *Tools* section (Free up space, Offline, Trash) that follows the same
   four-way layout toggle, favorites, recent files (Filen personal, received shares, local).
 - **Files** – Filen Drive and local folders (Downloads, Documents, Pictures, Camera, Music, Movies, internal storage).
   Breadcrumbs, list/grid view, sorting (name / date / size), per-item menu (open, open with, share, favorite, details),
@@ -30,7 +30,11 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
   into personal files. Items carry a visible badge ("Shared by …", "Shared with …", read-only lock) in lists,
   search results, recents and favorites. Write permission of a received share is tracked per item.
 - **Favorites** – app-level favorites for any location (Filen, shared, local), plus Filen's server-side favorites.
-- **Search** – across Filen personal, shared and local files, with scope chips.
+- **Search** – across Filen personal, shared and local files, with scope chips and Type / Date / Size filters.
+- **Available offline** – pin files or whole folders of your Filen drive (*Make available offline…*, also in multi-select); they are
+  kept on the phone, stay in step with Filen (new files arrive, renames/edits follow, removed ones go) and open with no network from
+  Home > Tools > Offline. Copies are stored unencrypted in the app's private storage (wiped on sign-out), not protected by the app lock.
+- **Storage quota** – used / total Filen storage on Home and in Settings.
 - **Viewers** – built-in image (pinch-zoom) and PDF viewers; everything else goes to Android's Open With.
   Filen files are downloaded and decrypted on demand into the app cache (no manual download step). While a file is
   open, a bottom bar offers **Copy, Move, Delete, Share and Open with**.

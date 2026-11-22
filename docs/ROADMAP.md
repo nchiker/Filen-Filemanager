@@ -19,7 +19,13 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 3. ~~**Search filters** (type, date, size, source)~~ - built, awaiting device check.
 4. **Public links** (create, copy, revoke) - M. Checked 2026-11-22: the SDK bindings expose `publicLinkFile`/`publicLinkDir`, `get*LinkStatus`,
    `update*Link`, `remove*Link` with an optional password, expiry presets (1 h .. 30 days / never) and a download switch. No ready-made share URL
-   seen: it would be built from the link uuid + key; the exact URL format is NOT verified yet.
+   seen. **URL format verified 2026-11-22** from the official CLI source (`external/filen-rs/filen-cli/src/commands/public_links_cmds.rs`, with
+   golden test strings): file link `https://app.filen.io/#/d/<link uuid>%23<hex of the file's key string>`, folder link
+   `https://app.filen.io/#/f/<link uuid>%23<hex of the folder link key string>`; "hex" = each byte of the key string as two lowercase hex digits.
+   The Kotlin bindings expose both keys (`DecryptedFileMeta.key`, `DirPublicLinkRw.linkKey`). Not yet confirmed on a device: that these two Kotlin
+   fields equal the CLI's key strings (check by opening a created link in a browser). Plan: pure URL builder in :core with the CLI's golden vectors,
+   per-item "Public link…" dialog (expiry preset, optional password, download switch, default expiry not "never"), copy with the clipboard flagged
+   sensitive, a "My links" screen via `listLinkedItems()` with revoke, never log the URL. Folder links publish the whole subtree (confirm).
 5. ~~**Storage quota bar**~~ - built on Home (`getUserInfo`), awaiting device check;
 6. **Cleanup upgrades**: junk/cache sizes, old screenshots, downloaded APKs, per-folder size view - M. Local only.
 

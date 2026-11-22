@@ -384,3 +384,7 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
   new name with the pin icon); a file deleted/trashed on the web stayed offline marked "No longer in Filen", still opened, vanished from the folder
   listing, and its X emptied the Offline list. A first agent run strayed into another app on the phone (Back pressed from Home) without opening
   or changing anything; later runs check the foreground package before every tap.
+
+## 0.4.5 prep (versionCode 11) - NOT tagged/pushed/released
+Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTES_0.4.5.md`. To release (owner's go-ahead needed):
+`tools/release.sh --notes "$(cat docs/RELEASE_NOTES_0.4.5.md)"` (it runs `tools/publish.sh` = pushes main, builds the signed APK, creates GitHub release v0.4.5).
