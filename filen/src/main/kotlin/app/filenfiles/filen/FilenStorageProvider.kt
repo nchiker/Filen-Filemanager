@@ -63,7 +63,13 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val client get() = session.client
 
     // ---------- offline pins ----------
-    val pins = PinManager(context, session)
+    val pins = PinManager(
+        JFile(context.filesDir, "pinned"),
+        { (session.state.value as? FilenSession.State.LoggedIn)?.email },
+        FilenPinRemote(session),
+        { LocalCache.freeBytes(context) },
+        { session.noteError(it) },
+    )
     override val revision get() = pins.revision
     override val syncing get() = pins.syncing
     override val lastError get() = pins.lastError

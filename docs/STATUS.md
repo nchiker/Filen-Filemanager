@@ -365,3 +365,8 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
   files that vanished from Filen ("No longer in Filen"); save errors of the state file surface in `lastError`; unused `Pins.withoutNested` removed.
   Known and accepted: nested folder pins list the subtree twice; a pinned folder under a trashed ancestor keeps syncing; rows scan the file list
   linearly (fine for hundreds of files); session expiry wipes the pins (dialog says so).
+- **Host checklist tests** (`filen/src/test/.../PinManagerTest`, 16 tests): `PinManager` takes a small `PinRemote` interface (`FilenPinRemote` is the SDK
+  implementation) so the device checklist is replayed against a fake Filen with no SDK or phone: pin + open with no network, pin while offline, folder
+  follows add/remove/trash, web edit re-download, local rename (no download), unpin offline, unpin vs. a pinned folder, deleted-in-Filen orphan, failed /
+  wrong-size / low-space downloads, pin during a running sync, sign-out during a sync, other account, stray sweep, folder size. They do not cover the UI,
+  WorkManager scheduling, Open With / FileProvider or real SDK behaviour (those still need the device).
