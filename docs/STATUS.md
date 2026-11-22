@@ -3,6 +3,22 @@
 Native Android file manager (Kotlin, Compose, Material 3) on the **official Filen Rust SDK** (`filen-sdk-rs`,
 `uniffi` feature). README.md has setup/build; this file has what a new session needs to keep going.
 
+## Handoff summary (2026-11-22, end of session)
+- **Released:** v0.4.5 (SDK 0.5.33, search filters, quota bar, offline pinning) and v0.4.6 (public links, in-app updater, explicit ascending/descending sort,
+  link-dialog fix) on github.com/nchiker/Filen-Filemanager. `main` is pushed up to the 0.4.6 prep commit; any later docs-only commits are local until
+  `tools/publish.sh`. The next release needs **versionCode >= 14**.
+- **Test phone** (Pixel 4a, serial in the maintainer's private notes): runs the released 0.4.6 / code 13, real account signed in (never sign out). It is shared with
+  the Stack session: ask `stack-00` (SendMessage) for the phone and wait for its "go"; never touch Stack's packages or the production phone; tell it when done.
+  Device runs: use a cheaper subagent, check the foreground package before every tap, never press Back from Home (one run once strayed into another app).
+- **Left in the owner's Drive:** folder "Filen Files link test (safe to delete)" (owner deletes it); public links need a paid Filen plan (the account has one now).
+- **Not device-tested:** the sort menu change; folder public links; password-protected link opened in a browser; a failed updater signature check / dropped download;
+  sign-out wipe of pins; the 12 h periodic pin sync; multi-GB pins; unpin while offline.
+- **Possible next items:** updater also comparing versionCode (it only compares the name), built-in video/audio/text viewers, archive browser on `ArchiveReader`,
+  cleanup upgrades, public-link list/QR niceties. **Parked:** Stack-link slice 5 (the `filen` locator, `moved`/`removed`/`unshared` events, lookup by UUID) until
+  the owner says Stack's side is ready. Do not rename `GRANT_BACKUP_FOLDER` or narrow the locked-writer allowance (Stack depends on them).
+- **Signing/release rules:** key lives outside the repo (`~/APK-Keys/filen`, see private notes); never push, tag, release or sign without the owner's explicit go-ahead;
+  `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_<version>.md)"` publishes.
+
 ## Where things are
 - Repo: `~/Projects/Filen`, committed inside the enclosing `~/Projects` git repo (only `Filen/` is staged by us;
   sibling projects there are deliberately untracked). Commit with `git add Filen && git commit -- Filen`.
@@ -229,7 +245,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
   a client that opens a grandchild cold would exercise it. Synthetic test folder `FinanceE2E-synthetic` is still in the owner's
   Drive (cleanup is the owner's call). Seq-41 "new file appears while locked" step was not run.
 
-## Stack look, zip browsing, add-to-zip, viewer actions (version 0.4.0, versionCode 6 - not yet released/tagged)
+## Stack look, zip browsing, add-to-zip, viewer actions (0.4.0, versionCode 6 - shipped in a later release)
 - **Stack-like UI**: fixed Stack palette in `ui/Theme.kt` (`StackColors`: white paper / #202124 ink / #1A73E8 blue / #DADCE0 outlines; dark variant
   #17181A; no wallpaper-derived colours), Home header is Stack's raised search pill with settings + account avatar (`StackSearchBar`,
   `AccountAction`), outlined cards, blue-only bottom nav. Scaffold uses `contentWindowInsets = WindowInsets.navigationBars` because every
@@ -292,7 +308,7 @@ The debug-only `DebugUploadReceiver` seeds a Drive folder from a local dir (see 
 - **Stack depends on this** (GRANT_BACKUP_FOLDER + the locked-writer allowance, from 0.4.2 on); Stack falls back to the system
   folder picker when the action is missing. Don't rename the action/extras or narrow the writer allowance without telling Stack.
 
-## Stack look, round 2 (0.4.3, versionCode 9 - not released)
+## Stack look, round 2 (0.4.3, versionCode 9 - shipped in a later release)
 Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). Owner chose to KEEP dark mode (same layout).
 - `ui/StackUi.kt`: `Rings` (Stack pastels + soft settings set), `RingBadge`, `ActionRow` (56dp ring badge, 16/13sp, chevron),
   `RowDivider` (#EEEEEE), `TextLink`, `StackSectionHeader` (14sp medium + blue text action), `StackDialog` (8dp, 20sp title),
@@ -304,7 +320,7 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
 - Theme: letterSpacing 0 everywhere, headlineSmall 20sp (dialog titles), shapes.extraLarge 8dp. Toolbar 56dp / 18sp title.
   Bottom nav: outline icons, 14sp labels, 1dp top divider.
 
-## SDK bump to filen-sdk-rs 0.5.33 (0.4.4, versionCode 10 - not released)
+## SDK bump to filen-sdk-rs 0.5.33 (0.4.4, versionCode 10 - shipped in v0.4.5)
 - `external/filen-rs` moved from 0.5.21 to 0.5.33 (`eb93d28`, 2026-11-19); `libfilen_sdk_rs.so` 36.5 -> 39.4 MB (arm64). Brings ICO/APNG
   thumbnails (thumbnails are requested for any `image/*` MIME, so nothing app-side gates them) and the webpki-roots/rustls-webpki update.
 - The SDK's `archive` feature is a default feature, so `build-rust.sh` already builds it: `ArchiveReader` / `openArchiveReader` and the
@@ -320,7 +336,7 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
 - Android's official app only moved to 0.5.32 (0.5.33 was web/desktop); if 0.5.33 misbehaves on a device, 0.5.32 is the known-good fallback.
 
 
-## Search filters + storage quota bar (no version bump, host-built only - NOT device-tested)
+## Search filters + storage quota bar (released in v0.4.5; device-tested, see below)
 - **Search filters**: `core/SearchFilter.kt` (`TypeFilter` any/folders/images/video/audio/documents/archives, `DateFilter` 24 h/week/month/year,
   `SizeFilter` <1 MB / 1-100 MB / >100 MB, `SearchFilters`), applied client-side to the results in `ui/Search.kt` next to the existing
   source chips (All / Filen / Shared / This device). Three dropdown chips + "Clear filters"; selection survives rotation. Unknown
@@ -336,7 +352,7 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
   with a filter active the search asks providers for up to 1000 matches instead of 100; archive/document MIME matching is explicit instead of substring;
   0-byte files match "Under 1 MB"; `quota()` / `searchProgressive` no longer swallow CancellationException.
 
-## Offline pinning ("Make available offline") - host-built only, NOT device-tested
+## Offline pinning ("Make available offline") - released in v0.4.5; device results further down
 Design reviewed by a stronger agent before building (key points adopted: stable ids, own directory, pin store consulted first, background job).
 - **Pure logic** `core/Pins.kt` (+ `PinsTest`): `PinState` (user's choices: direct file keys + pinned folder uuids; plus what is on the device),
   `Pins.reconcile` (wanted remote files vs. copies -> download / local rename / delete / orphaned), `PinStore` (binary state file, atomic write,
@@ -385,11 +401,11 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
   listing, and its X emptied the Offline list. A first agent run strayed into another app on the phone (Back pressed from Home) without opening
   or changing anything; later runs check the foreground package before every tap.
 
-## 0.4.5 prep (versionCode 11) - NOT tagged/pushed/released
+## 0.4.5 prep (versionCode 11) - RELEASED as v0.4.5
 Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTES_0.4.5.md`. To release (owner's go-ahead needed):
 `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_0.4.5.md)"` (it runs `tools/publish.sh` = pushes main, builds the signed APK, creates GitHub release v0.4.5).
 
-## Public links - host-built only, NOT device-tested, NOT released (after 0.4.5)
+## Public links - released in v0.4.6; device-verified for files (see the evening results)
 - `core/PublicLinks.kt`: `LinkExpiry` (SDK presets), `LinkSettings`, `PasswordChange` (Keep / Remove / Set), `LinkInfo`, `LinkStorage`, and `LinkUrl.build`
   (`https://app.filen.io/#/d|f/<uuid>%23<hex of key string>`; golden vectors from the official filen-cli in `LinkUrlTest`).
 - Filen provider implements `LinkStorage` (`getFile/DirLinkStatus`, `publicLinkFile/Dir`, `updateFile/DirLink`, `removeFile/DirLink`, `listLinkedItems`).
@@ -406,7 +422,7 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
   creating a link for that file in the Filen web app (right-click > Public link). The error text is shown as the SDK/server gave it; logcat has no
   fatal errors and never contains `app.filen.io`. The test folder is still in the owner's Drive.
 
-## In-app updates (ported from the AmiPro app's Updater) - host-built only, NOT device-tested, NOT released
+## In-app updates (ported from the AmiPro app's Updater) - released in v0.4.6; device-verified
 - `Updater.kt` (+ `InstallResultReceiver`): the banner/Settings button is now Update -> (download with progress, SHA-256 against GitHub's asset digest when
   given, same package, higher versionCode, same signing certificate) -> Install -> Android's `PackageInstaller` confirmation. First use sends the person
   to Android's "install unknown apps" page for Filen Files. Failures end in a plain message + "Try again" and always say nothing was changed. The daily check
@@ -436,7 +452,7 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
 - **Sort menu**: ascending/descending are now explicit menu items (checkmarks) under Name / Date / Size; picking a key keeps the current direction (before, tapping the
   active key flipped the direction and picking another key reset it to ascending). Host build only, not device-tested. Applies to every file list (same `Prefs.sort`).
 
-## 0.4.6 prep (versionCode 13) - NOT tagged/pushed/released
+## 0.4.6 prep (versionCode 13) - RELEASED as v0.4.6
 Version bumped (13, because the test phone carries a throwaway 0.4.6 / code 12 and Android refuses downgrades), README + `docs/RELEASE_NOTES_0.4.6.md`.
 To release (owner's go-ahead needed): `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_0.4.6.md)"`. The first release that contains the in-app updater is this
 one, so phones on <= 0.4.5 still update through the browser once.
