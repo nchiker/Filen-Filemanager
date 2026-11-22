@@ -329,7 +329,7 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
 - **Storage quota bar**: SDK `client.getUserInfo()` has `storageUsed` / `maxStorage` (verified in the generated bindings). New `QuotaStorage`
   + `Quota` in :core (`StorageRouter.quota()`, errors -> null), implemented by `FilenStorageProvider`. Home shows a thin bar with
   "X of Y used on Filen" under the Storage tiles when signed in; hidden until the SDK answers or if it fails; refreshes with `changeCounter`.
-  Not shown in Settings yet. Unit test: `QuotaTest`.
+  Also shown at the top of Settings. Unit test: `QuotaTest`.
 - Checked: `:core:test :filen:testDebugUnitTest :app:assembleDebug` pass on the host. To check on a device: filter chips with real
   results (esp. date/size on Filen vs. local items), bar value vs. the Filen web app, bar after an upload.
 - Review follow-up (code-review of 0b4ac61, all fixed, host-tested only): quota bar keeps its last good value across refreshes and hides when the plan size is 0;

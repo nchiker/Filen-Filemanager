@@ -515,14 +515,14 @@ fun FavoritesScreen(env: AppEnv) {
 
 /** Filen account usage ("12.3 GB of 50 GB used"); hidden until the SDK answers and when it can't. */
 @Composable
-private fun QuotaBar(env: AppEnv, signedIn: Boolean) {
+fun QuotaBar(env: AppEnv, signedIn: Boolean, padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     // Keep the last good value across refreshes (a failed or slow refresh must not hide the bar).
     var quota by remember { mutableStateOf<app.filenfiles.core.Quota?>(null) }
     LaunchedEffect(signedIn, env.app.changeCounter) { env.app.router.quota()?.let { quota = it } }
     val q = quota?.takeIf { it.max > 0 } ?: return
     val fmt = { b: Long -> android.text.format.Formatter.formatFileSize(ctx, b) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(padding)) {
         LinearProgressIndicator({ q.fraction }, Modifier.fillMaxWidth().height(6.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))
         Text("${fmt(q.used)} of ${fmt(q.max)} used on Filen", style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp))

@@ -69,6 +69,8 @@ fun SettingsScreen(env: AppEnv) {
         AppBar("Settings", onBack = { env.nav.popBackStack() })
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
             Spacer(Modifier.height(8.dp))
+            val signedIn = rememberSignedIn(env)
+            if (signedIn) { QuotaBar(env, true, PaddingValues(vertical = 8.dp)); RowDivider() }
             ActionRow(Icons.Outlined.Lock, Rings.softGreen, "App lock",
                 if (prefs.appLock) "On · $lockLabel" else "Off · Fingerprint or screen lock") { dialog = "lock" }
             RowDivider()
