@@ -435,3 +435,8 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
   main still says 0.4.5 / 11). The Drive test folder "Filen Files link test (safe to delete)" is still in the owner's Drive.
 - **Sort menu**: ascending/descending are now explicit menu items (checkmarks) under Name / Date / Size; picking a key keeps the current direction (before, tapping the
   active key flipped the direction and picking another key reset it to ascending). Host build only, not device-tested. Applies to every file list (same `Prefs.sort`).
+
+## 0.4.6 prep (versionCode 13) - NOT tagged/pushed/released
+Version bumped (13, because the test phone carries a throwaway 0.4.6 / code 12 and Android refuses downgrades), README + `docs/RELEASE_NOTES_0.4.6.md`.
+To release (owner's go-ahead needed): `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_0.4.6.md)"`. The first release that contains the in-app updater is this
+one, so phones on <= 0.4.5 still update through the browser once.

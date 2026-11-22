@@ -11,8 +11,8 @@ android {
         applicationId = "app.filenfiles"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.4.5"
+        versionCode = 13
+        versionName = "0.4.6"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     buildFeatures { compose = true }

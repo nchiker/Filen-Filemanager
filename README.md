@@ -34,6 +34,8 @@ to Filen, or skip for local-only, and grant **All files access**. Later releases
 - **Available offline** – pin files or whole folders of your Filen drive (*Make available offline…*, also in multi-select); they are
   kept on the phone, stay in step with Filen (new files arrive, renames/edits follow, removed ones go) and open with no network from
   Home > Tools > Offline. Copies are stored unencrypted in the app's private storage (wiped on sign-out), not protected by the app lock.
+- **Public links** – *Public link…* on a file or folder of your Filen drive: expiry (default 1 week), optional password, download switch,
+  copy, change or remove; *Home > Tools > Links* lists every link. Needs a Filen plan that includes public links.
 - **Storage quota** – used / total Filen storage on Home and in Settings.
 - **Viewers** – built-in image (pinch-zoom) and PDF viewers; everything else goes to Android's Open With.
   Filen files are downloaded and decrypted on demand into the app cache (no manual download step). While a file is
