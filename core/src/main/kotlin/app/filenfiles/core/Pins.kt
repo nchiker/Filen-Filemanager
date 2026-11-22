@@ -70,10 +70,6 @@ object Pins {
 
     /** Size above which pinning asks for confirmation first. */
     const val WARN_BYTES = 2L shl 30
-
-    /** Folder uuids already covered by a pinned ancestor are redundant; used to avoid listing the same subtree twice. */
-    fun withoutNested(folders: List<PinnedFolder>, isAncestor: (ancestor: String, child: String) -> Boolean): List<PinnedFolder> =
-        folders.filter { f -> folders.none { o -> o.uuid != f.uuid && isAncestor(o.uuid, f.uuid) } }
 }
 
 /**
@@ -129,6 +125,10 @@ interface PinStorage {
     val syncing: kotlinx.coroutines.flow.StateFlow<Boolean>
     /** Whether this item (file or folder) is pinned directly. */
     fun isPinned(item: FileItem): Boolean
+    /** True when [file] is pinned on its own (it can be removed from the Offline list); false when it only comes through a folder. */
+    fun isDirect(file: PinnedFile): Boolean
+    /** Keys of directly pinned files that no longer exist in Filen (their copy is kept until unpinned). */
+    val orphaned: Set<String>
     /** Whether a copy of this file is on the device (pinned directly or through a pinned folder). */
     fun isOffline(item: FileItem): Boolean
     /** Bytes a pin of [items] would download (recursive for folders); needs the network. */

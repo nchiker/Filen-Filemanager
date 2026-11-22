@@ -508,7 +508,7 @@ private fun PinDialog(env: AppEnv, items: List<FileItem>, onClose: () -> Unit) {
                 if (tooBig) Text("That is more than this phone has room for.", color = MaterialTheme.colorScheme.error)
                 else if ((bytes ?: 0) > Pins.WARN_BYTES) Text("That is a lot of data; use Wi-Fi.", color = MaterialTheme.colorScheme.error)
                 Text("Copies are kept unencrypted on this phone (protected by Android's storage encryption, not by the app lock) " +
-                    "until you remove them or sign out. Folders stay in step with Filen: new files arrive, removed ones go.",
+                    "until you remove them, sign out or your session expires (then you pin again). Folders stay in step with Filen: new files arrive, removed ones go.",
                     style = MaterialTheme.typography.bodySmall)
             }
         },

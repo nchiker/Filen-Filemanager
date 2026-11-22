@@ -353,8 +353,15 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
 - **UI**: item menu "Make available offline…" / "Remove from offline"; multi-select entry; confirm dialog with size (recursive for folders), free space,
   >2 GiB warning and the privacy note (copies are plaintext on the phone, Android storage encryption only, not the app lock); badge on list rows and grid
   cells; Home > Tools > "Offline" screen (built only from the pin store: files, pinned folders, total size, Sync now, last error, unpin).
-- **Not done / known limits**: personal drive only (no received shares: they have no stableUuid); unpin deletes files at the next sync, which needs a
-  connection; session expiry wipes all pins (re-pin after login); folder pins don't show the file tree offline (only the flat Offline list); no
+- **Not done / known limits**: personal drive only (no received shares: they have no stableUuid); unpin deletes at once only what is certainly unwanted (no pinned folder can still reach it, as far as the last sync in this
+  process knows), the rest at the next sync, which needs a connection; session expiry wipes all pins (re-pin after login); folder pins don't show the file tree offline (only the flat Offline list); no
   content-hash cross-check; no encryption at rest; offline thumbnails of pinned images come from the pinned file only where Coil loads it directly.
 - **To check on a device**: pin a file and a folder, airplane mode, open from Offline and from Files; add/remove a file in the pinned folder on the web
   and Sync now; edit a pinned file on the web (re-download); rename; unpin; sign-out wipes `files/pinned`; Open With on a pinned file.
+- Review follow-up (code-review of 225b758, fixed, host-tested only): pin/unpin no longer touch the network (offline pinning used to throw out of
+  `appScope`); a pin made before its first sync is recognised (stable key learned from listings, swapped in at sync); sync no longer holds the state lock
+  across downloads (pin/unpin never wait; state is mutated atomically per step, a pin made mid-sync is picked up by the queued second pass);
+  `wipe()` bumps a generation so a running sync can't write after sign-out; the Offline list has a remove button for directly pinned files and marks
+  files that vanished from Filen ("No longer in Filen"); save errors of the state file surface in `lastError`; unused `Pins.withoutNested` removed.
+  Known and accepted: nested folder pins list the subtree twice; a pinned folder under a trashed ancestor keeps syncing; rows scan the file list
+  linearly (fine for hundreds of files); session expiry wipes the pins (dialog says so).

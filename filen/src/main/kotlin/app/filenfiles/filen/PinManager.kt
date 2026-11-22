@@ -28,11 +28,20 @@ import uniffi.filen_sdk_rs.File as FFile
  * The state file records only the user's choices plus what has arrived; every sync recomputes the rest.
  */
 class PinManager(private val context: Context, private val session: FilenSession) {
-    private val lock = Mutex()
+    /** Guards [state] and the state file (short, never held across a download or a network call). */
+    private val stateLock = Any()
+    /** One sync at a time; pin/unpin never wait for it. */
+    private val syncLock = Mutex()
+    /** Bumped by [wipe]: a sync that started before it must not write anything afterwards. */
+    private val generation = java.util.concurrent.atomic.AtomicInteger()
     private val base get() = JFile(context.filesDir, "pinned")
     private val storeFile get() = JFile(base, "pins.bin")
     private val filesRoot get() = JFile(base, "files")
     @Volatile private var state: PinState? = null
+    /** version uuid -> stable key, learned from listings, so a file with a newer version than our copy is still recognised. */
+    private val versionKeys = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** Keys reachable through a pinned folder as of the last sync (null until one ran in this process). */
+    @Volatile private var lastFolderKeys: Set<String>? = null
     private val _revision = MutableStateFlow(0)
     /** Bumps whenever pins or what is on the device changed, so badges and the Offline list refresh. */
     val revision: StateFlow<Int> = _revision
@@ -44,16 +53,24 @@ class PinManager(private val context: Context, private val session: FilenSession
     private val account get() = (session.state.value as? FilenSession.State.LoggedIn)?.email
     private val client get() = session.client
 
-    private fun current(): PinState? {
+    // Callers hold stateLock.
+    private fun currentLocked(): PinState? {
         val acct = account ?: return null
         state?.takeIf { it.account == acct }?.let { return it }
         return (PinStore.load(storeFile, acct) ?: PinState(acct)).also { state = it }
     }
 
-    private fun commit(s: PinState) {
-        state = s
-        runCatching { PinStore.save(storeFile, s) }
+    private fun current(): PinState? = synchronized(stateLock) { currentLocked() }
+
+    /** Applies [f] to the latest state and saves it. Skipped when [gen] is stale (a wipe happened since the sync began). */
+    private fun mutate(gen: Int = generation.get(), f: (PinState) -> PinState): Boolean = synchronized(stateLock) {
+        if (gen != generation.get()) return false
+        val cur = currentLocked() ?: return false
+        val next = f(cur)
+        state = next
+        try { PinStore.save(storeFile, next) } catch (e: Exception) { lastError = "Couldn't save the offline list: ${e.message}" }
         _revision.value++
+        true
     }
 
     private suspend inline fun <T> io(crossinline block: suspend () -> T): T = withContext(Dispatchers.IO) {
@@ -62,7 +79,9 @@ class PinManager(private val context: Context, private val session: FilenSession
 
     // ---------- queries (memory only: they work offline) ----------
 
-    private fun keyForUuid(s: PinState, uuid: String) = s.files.firstOrNull { it.version == uuid }?.key ?: uuid
+    /** The stable key of [uuid]: from a copy we hold, from a listing we saw, else [uuid] itself (a pin made before its first sync). */
+    private fun keyForUuid(s: PinState, uuid: String) =
+        s.files.firstOrNull { it.version == uuid }?.key ?: versionKeys[uuid] ?: uuid
 
     fun isPinned(item: FileItem): Boolean {
         val s = current() ?: return false
@@ -78,6 +97,7 @@ class PinManager(private val context: Context, private val session: FilenSession
     fun offline(): List<PinnedFile> = current()?.files.orEmpty()
     fun folders(): List<PinnedFolder> = current()?.folders.orEmpty()
     fun directNames(): Map<String, String> = current()?.directKeys.orEmpty()
+    fun isDirect(f: PinnedFile) = current()?.directKeys?.containsKey(f.key) == true
 
     fun localFile(f: PinnedFile) = JFile(JFile(filesRoot, safe(f.key)), safeName(f.name))
 
@@ -91,42 +111,43 @@ class PinManager(private val context: Context, private val session: FilenSession
     private fun safe(s: String) = s.replace(Regex("[^A-Za-z0-9_-]"), "_")
     private fun safeName(n: String) = n.replace('/', '_').ifBlank { "file" }
 
-    // ---------- changes ----------
+    // ---------- changes (no network: they work offline and never wait for a sync) ----------
 
     /** Records the choice; the files arrive when [sync] runs (a background job, so it survives the app being closed). */
-    suspend fun pin(items: List<FileItem>) = io {
-        lock.withLock {
-            var s = current() ?: return@withLock
+    suspend fun pin(items: List<FileItem>) = withContext(Dispatchers.IO) {
+        mutate { s0 ->
+            var s = s0
             for (it in items) {
                 if (it.origin != Origin.FILEN_PERSONAL) continue
-                if (it.isDirectory) {
-                    if (s.folders.none { f -> f.uuid == it.id.key }) s = s.copy(folders = s.folders + PinnedFolder(it.id.key, it.name))
-                } else {
-                    val f = client.getFileOptional(it.id.key) ?: continue
-                    s = s.copy(directKeys = s.directKeys + (keyOf(f) to it.name))
-                }
+                s = if (it.isDirectory) {
+                    if (s.folders.any { f -> f.uuid == it.id.key }) s else s.copy(folders = s.folders + PinnedFolder(it.id.key, it.name))
+                } else s.copy(directKeys = s.directKeys + (keyForUuid(s, it.id.key) to it.name)) // a pre-sync pin holds the version uuid; sync swaps in the stable key
             }
-            commit(s)
+            s
         }
+        Unit
     }
 
-    suspend fun unpin(items: List<FileItem>) = io {
-        lock.withLock {
-            var s = current() ?: return@withLock
+    /**
+     * Removes the choice and deletes what is certainly no longer wanted right away, with no network: a file that is not
+     * reachable through a pinned folder (as far as we know) is wiped now; anything uncertain waits for the next sync.
+     */
+    suspend fun unpin(items: List<FileItem>) = withContext(Dispatchers.IO) {
+        val doomed = ArrayList<PinnedFile>()
+        mutate { s0 ->
+            var s = s0
             for (it in items) {
                 s = if (it.isDirectory) s.copy(folders = s.folders.filter { f -> f.uuid != it.id.key })
                 else s.copy(directKeys = s.directKeys - keyForUuid(s, it.id.key))
             }
-            commit(s)
+            val viaFolders = if (s.folders.isEmpty()) emptySet() else lastFolderKeys
+            if (viaFolders != null) {
+                doomed += s.files.filter { it.key !in s.directKeys && it.key !in viaFolders }
+                s = s.copy(files = s.files - doomed.toSet())
+            }
+            s
         }
-    }
-
-    private fun keyOf(f: FFile) = f.stableUuid ?: f.uuid
-
-    private fun remote(f: FFile): RemoteFile {
-        val m = (f.meta as? FileMeta.Decoded)?.v1
-        val name = m?.name ?: "file-${f.uuid}"
-        return RemoteFile(keyOf(f), f.uuid, name, f.size.toLong(), m?.modified ?: f.timestamp, m?.mime?.takeIf { it.isNotBlank() })
+        doomed.forEach { JFile(filesRoot, safe(it.key)).deleteRecursively() }
     }
 
     /** Total bytes a pin of [items] would download, from a recursive listing; for the confirmation. */
@@ -142,64 +163,88 @@ class PinManager(private val context: Context, private val session: FilenSession
         total
     }
 
+    private fun keyOf(f: FFile) = f.stableUuid ?: f.uuid
+
+    private fun remote(f: FFile): RemoteFile {
+        val m = (f.meta as? FileMeta.Decoded)?.v1
+        val name = m?.name ?: "file-${f.uuid}"
+        return RemoteFile(keyOf(f), f.uuid, name, f.size.toLong(), m?.modified ?: f.timestamp, m?.mime?.takeIf { it.isNotBlank() })
+    }
+
     // ---------- sync ----------
 
     /**
      * Brings the device in line with the pins: new and changed files are downloaded, files that left a pinned folder or
      * were unpinned are deleted, renames are done locally. A listing that fails changes nothing. Returns the number of
-     * files that could not be downloaded (they are tried again next time).
+     * files that could not be downloaded (they are tried again next time). Pins made while it runs are picked up by the
+     * next run (the worker queues one behind this one).
      */
     suspend fun sync(): Int = io {
-        lock.withLock {
+        syncLock.withLock {
+            val gen = generation.get()
             val s0 = current() ?: return@withLock 0
             _syncing.value = true
-            try { doSync(s0) } finally { _syncing.value = false }
+            try { doSync(s0, gen) } finally { _syncing.value = false }
         }
     }
 
-    private suspend fun doSync(s0: PinState): Int {
+    private suspend fun doSync(s0: PinState, gen: Int): Int {
         lastError = null
         val wanted = LinkedHashMap<String, RemoteFile>()
         val missing = HashSet<String>()
+        val resolved = HashMap<String, String>() // pinned key as stored -> stable key
         for (key in s0.directKeys.keys) {
             val f = client.getFileByStableUuidOptional(key) ?: client.getFileOptional(key)
-            if (f == null || f.parent is ParentUuid.Trash) missing.add(key) else wanted.putIfAbsent(keyOf(f), remote(f))
+            if (f == null || f.parent is ParentUuid.Trash) missing.add(key)
+            else { resolved[key] = keyOf(f); wanted.putIfAbsent(keyOf(f), remote(f)) }
         }
         val liveFolders = ArrayList<PinnedFolder>()
+        val viaFolders = HashSet<String>()
         for (folder in s0.folders) {
             val dir = client.getDirOptional(folder.uuid)
             if (dir == null || dir.parent is ParentUuid.Trash) continue // gone: drops from the pins, its copies are deleted below
             liveFolders.add(folder)
             client.listDirRecursive(AnyDirWithContext.Normal(AnyNormalDir.Dir(dir)), null).files
-                .filter { it.parent !is ParentUuid.Trash }.forEach { wanted.putIfAbsent(keyOf(it), remote(it)) }
+                .filter { it.parent !is ParentUuid.Trash }.forEach { viaFolders.add(keyOf(it)); wanted.putIfAbsent(keyOf(it), remote(it)) }
         }
-        var s = s0.copy(folders = liveFolders)
-        val plan = Pins.reconcile(s, wanted.values, missing)
+        wanted.values.forEach { versionKeys[it.version] = it.key }
+        lastFolderKeys = viaFolders
+        // Plan against the latest state (pins may have changed during the listing), apply to it atomically.
+        val plan = Pins.reconcile(current() ?: return 0, wanted.values, missing)
         orphaned = plan.orphaned
 
-        for (f in plan.delete) { JFile(filesRoot, safe(f.key)).deleteRecursively() }
-        s = s.copy(files = s.files.filter { f -> plan.delete.none { it.key == f.key } })
+        val deleted = plan.delete.map { it.key }.toSet()
+        // A pin made before its first sync holds a version uuid; swap in the stable key now that we know it.
+        if (!mutate(gen) { cur ->
+                cur.copy(
+                    directKeys = cur.directKeys.entries.associate { (resolved[it.key] ?: it.key) to it.value },
+                    folders = cur.folders.filter { f -> liveFolders.any { it.uuid == f.uuid } },
+                    files = cur.files.filter { it.key !in deleted },
+                )
+            }) return 0
+        for (f in plan.delete) JFile(filesRoot, safe(f.key)).deleteRecursively()
         for ((f, newName) in plan.rename) {
             val from = localFile(f); val to = JFile(from.parentFile, safeName(newName))
-            if (from.isFile && from.renameTo(to)) s = s.copy(files = s.files.map { if (it.key == f.key) it.copy(name = newName) else it })
+            if (from.isFile && from.renameTo(to)) mutate(gen) { cur -> cur.copy(files = cur.files.map { if (it.key == f.key) it.copy(name = newName) else it }) }
         }
-        commit(s)
-        sweepStrays(s)
+        current()?.let { sweepStrays(it) }
 
         var failed = 0
         for (r in plan.download) {
+            if (gen != generation.get()) return failed
             try {
                 download(r)
                 val done = PinnedFile(r.key, r.version, r.name, r.size, r.modified, r.mime)
-                s = s.copy(files = s.files.filter { it.key != r.key } + done)
-                commit(s)
+                if (!mutate(gen) { cur -> cur.copy(files = cur.files.filter { it.key != r.key } + done) }) {
+                    JFile(filesRoot, safe(r.key)).deleteRecursively() // wiped meanwhile: leave nothing behind
+                    return failed
+                }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: Exception) {
                 failed++; lastError = e.friendlyOrNull() ?: e.message
                 if (e.failureKind() == FailureKind.AUTH || e.failureKind() == FailureKind.DISK_FULL) break
             }
         }
-        // Folder pins that no longer have a folder, and files only reachable through them, are gone from the state already.
         return failed
     }
 
@@ -232,10 +277,16 @@ class PinManager(private val context: Context, private val session: FilenSession
         }
     }
 
-    /** Sign-out / session expiry: nothing decrypted may stay behind. */
+    /**
+     * Sign-out / session expiry: nothing decrypted may stay behind. Bumping [generation] first stops a running sync from
+     * writing again; the copies of an expired session go too, the user simply pins again after signing in.
+     */
     fun wipe() {
-        state = null
-        base.deleteRecursively()
+        synchronized(stateLock) {
+            generation.incrementAndGet()
+            state = null; lastFolderKeys = null; orphaned = emptySet(); versionKeys.clear()
+            base.deleteRecursively()
+        }
         _revision.value++
     }
 }

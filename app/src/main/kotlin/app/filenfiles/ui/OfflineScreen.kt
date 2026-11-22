@@ -71,7 +71,14 @@ fun OfflineScreen(env: AppEnv) {
                 ListItem(
                     leadingContent = { ItemThumb(item, 44.dp) },
                     headlineContent = { Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = { Text(Formatter.formatFileSize(ctx, f.size)) },
+                    supportingContent = {
+                        Text(Formatter.formatFileSize(ctx, f.size) + if (f.key in pins.orphaned) " · No longer in Filen" else "")
+                    },
+                    trailingContent = {
+                        if (pins.isDirect(f)) IconButton({
+                            scope.launch { pins.unpin(listOf(item)); PinSyncWorker.syncNow(ctx) }
+                        }) { Icon(Icons.Filled.Close, "Remove from offline") }
+                    },
                     modifier = Modifier.clickable { env.actions.open(item) },
                 )
             }

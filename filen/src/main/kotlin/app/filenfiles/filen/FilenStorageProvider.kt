@@ -69,6 +69,8 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     override val lastError get() = pins.lastError
     override fun isPinned(item: FileItem) = pins.isPinned(item)
     override fun isOffline(item: FileItem) = pins.isOffline(item)
+    override fun isDirect(file: PinnedFile) = pins.isDirect(file)
+    override val orphaned get() = pins.orphaned
     override fun canPin(item: FileItem) = item.origin == Origin.FILEN_PERSONAL && item.id.key != ROOT
     override suspend fun sizeOf(items: List<FileItem>) = pins.sizeOf(items)
     override suspend fun pin(items: List<FileItem>) { pins.pin(items) }

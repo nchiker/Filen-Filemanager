@@ -56,11 +56,6 @@ class PinsTest {
         assertFalse(Pins.tooBig(100, 200, 64))
     }
 
-    @Test fun nestedFoldersAreDropped() {
-        val a = PinnedFolder("a", "A"); val b = PinnedFolder("b", "B")
-        assertEquals(listOf(a), Pins.withoutNested(listOf(a, b)) { anc, ch -> anc == "a" && ch == "b" })
-    }
-
     @Test fun storeRoundTripAndGuards() {
         val f = File.createTempFile("pins", ".bin"); f.deleteOnExit()
         val s = PinState("acc", mapOf("k" to "n.txt"), listOf(PinnedFolder("d", "Docs")), listOf(p("k"), PinnedFile("m", "v", "m.jpg", 5, 6, "image/jpeg")))
