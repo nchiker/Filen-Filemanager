@@ -146,7 +146,7 @@ fun SettingsScreen(env: AppEnv) {
         "update" -> StackDialog(close, "Update check", buttons = {
             TextButton(close) { Text("Close") }
             val v = prefs.updateVersion
-            if (v != null) TextButton({ open(prefs.updateUrl ?: UpdateChecker.RELEASES_PAGE) }) { Text("Download $v") }
+            if (v != null) UpdateButton(env)
             else TextButton(enabled = !checking, onClick = {
                 checking = true; updateStatus = "Checking…"
                 app.checkForUpdate(force = true) { r ->
@@ -159,7 +159,8 @@ fun SettingsScreen(env: AppEnv) {
                 }
             }) { Text("Check now") }
         }) {
-            DialogSwitch("Check daily", prefs.autoUpdateCheck, "Asks GitHub, never installs by itself") { prefs.updateAutoUpdateCheck(it) }
+            DialogSwitch("Check daily", prefs.autoUpdateCheck, "Asks GitHub; installing always needs your confirmation") { prefs.updateAutoUpdateCheck(it) }
+            updateFailure(env)?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
             Text(updateStatus ?: "Installed: ${app.installedVersion}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         }
         "about" -> StackDialog(close, "Filen Files ${app.installedVersion}", buttons = {

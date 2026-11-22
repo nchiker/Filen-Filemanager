@@ -405,3 +405,13 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
   browser. Cause not established: either the account's plan has no public links, or a call/option needs a plan the account lacks. To settle it: try
   creating a link for that file in the Filen web app (right-click > Public link). The error text is shown as the SDK/server gave it; logcat has no
   fatal errors and never contains `app.filen.io`. The test folder is still in the owner's Drive.
+
+## In-app updates (ported from the AmiPro app's Updater) - host-built only, NOT device-tested, NOT released
+- `Updater.kt` (+ `InstallResultReceiver`): the banner/Settings button is now Update -> (download with progress, SHA-256 against GitHub's asset digest when
+  given, same package, higher versionCode, same signing certificate) -> Install -> Android's `PackageInstaller` confirmation. First use sends the person
+  to Android's "install unknown apps" page for Filen Files. Failures end in a plain message + "Try again" and always say nothing was changed. The daily check
+  and the Home banner are unchanged (`UpdateChecker` now also returns asset size, digest and the release notes). Manifest: `REQUEST_INSTALL_PACKAGES` +
+  the receiver. A debug build cannot take a release update (the message says so). Play Protect may offer a scan of the update ("Install without
+  scanning" uploads nothing).
+- To test on a device (needs the owner's go-ahead because it publishes): publish a throwaway release with a higher versionCode, tap Update on the banner,
+  confirm, then delete the throwaway release and tag. Not tested: a failed signature check, a dropped connection mid-download.

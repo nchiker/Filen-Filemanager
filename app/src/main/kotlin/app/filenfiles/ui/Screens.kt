@@ -215,8 +215,11 @@ fun HomeScreen(env: AppEnv) {
                     OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                         Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.SystemUpdate, null); Spacer(Modifier.width(12.dp))
-                            Text("Version $v is available", Modifier.weight(1f))
-                            TextButton({ runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(env.app.prefs.updateUrl ?: app.filenfiles.UpdateChecker.RELEASES_PAGE))) } }) { Text("Download") }
+                            Column(Modifier.weight(1f)) {
+                                Text("Version $v is available")
+                                updateFailure(env)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                            }
+                            UpdateButton(env)
                             IconButton({ env.app.prefs.dismissUpdate(v) }) { Icon(Icons.Filled.Close, "Dismiss") }
                         }
                     }

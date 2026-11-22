@@ -182,6 +182,8 @@ this app is built on is AGPL-3.0, which is why the app is too.
 ## Privacy
 
 The app talks to Filen's servers (your files stay end-to-end encrypted) and, optionally, to GitHub once a day to
-see whether a newer release exists (Settings > Updates; an anonymous request, switch it off if you prefer). There
+see whether a newer release exists (Settings > Updates; an anonymous request, switch it off if you prefer). Tapping *Update* on
+the banner downloads the new APK in the app, checks it (checksum, same package, newer version, same signing key) and hands it to
+Android's installer, which asks you to confirm; nothing installs by itself. There
 is no analytics or crash reporting. Opening recent apps can be blanked, and an app lock (fingerprint, face or screen
 lock) can be switched on in Settings.

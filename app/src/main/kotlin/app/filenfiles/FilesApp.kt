@@ -25,6 +25,7 @@ class FilesApp : Application() {
     lateinit var local: LocalStorageProvider; private set
     lateinit var router: StorageRouter; private set
     lateinit var filen: FilenStorageProvider; private set
+    val updater by lazy { Updater(this) }
     lateinit var saf: app.filenfiles.saf.SafStorageProvider; private set
     /** Set at the end of [onCreate]; content-provider calls can arrive before that on a cold process start. */
     @Volatile var ready = false; private set
