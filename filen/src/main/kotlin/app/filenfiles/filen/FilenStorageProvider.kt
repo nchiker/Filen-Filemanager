@@ -40,7 +40,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage, QuotaStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -323,6 +323,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         client.deleteFileVersion(v); versionObjs.remove(version.id)
     }
 
+    override suspend fun quota(): Quota = io { client.getUserInfo().let { Quota(it.storageUsed.toLong(), it.maxStorage.toLong()) } }
     override suspend fun versioningEnabled(): Boolean = io { client.getUserInfo().versioningEnabled }
     override suspend fun setVersioningEnabled(enabled: Boolean): Unit = io { client.setVersioningEnabled(enabled) }
 

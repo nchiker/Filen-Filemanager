@@ -16,9 +16,9 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 ## Address soon (high value, feasible)
 1. **Offline pinning** ("Available offline", exempt from the 1 GiB LRU cache) - M. Reuse `materialize`; no SDK dependency. Biggest practical gap.
 2. **Built-in video/audio and text viewers** (Media3 over the materialised file) - M. Removes the Open With bounce for common types.
-3. **Search filters** (type, date, size, source) - S. Works on the existing index.
+3. ~~**Search filters** (type, date, size, source)~~ - built, awaiting device check.
 4. **Public links** (create, copy, revoke) - M. Check whether filen-sdk-rs exposes password/expiry (the TS SDK does); otherwise plain links with a warning.
-5. **Storage quota bar** on Home/Settings - S. Needs an SDK account-info call (not verified).
+5. ~~**Storage quota bar**~~ - built on Home (`getUserInfo`), awaiting device check; Settings placement not done.
 6. **Cleanup upgrades**: junk/cache sizes, old screenshots, downloaded APKs, per-folder size view - M. Local only.
 
 ## Roadmap

@@ -262,7 +262,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
 - Add-to-zip on a Filen-hosted zip: verified by the owner on their real account.
 
 ## Ideas not done yet
-Built-in video/audio/text viewers, storage cleanup/analyzer, offline pinning, search filters, per-recipient revoke / public links,
+Built-in video/audio/text viewers, offline pinning, per-recipient revoke / public links,
 x86_64 build, camera backup content-trigger (instead of the 30-minute poll).
 
 ## Release signing key (never in git)
@@ -319,3 +319,16 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
   so the cache can't be read with run-as).
 - Android's official app only moved to 0.5.32 (0.5.33 was web/desktop); if 0.5.33 misbehaves on a device, 0.5.32 is the known-good fallback.
 
+
+## Search filters + storage quota bar (no version bump, host-built only - NOT device-tested)
+- **Search filters**: `core/SearchFilter.kt` (`TypeFilter` any/folders/images/video/audio/documents/archives, `DateFilter` 24 h/week/month/year,
+  `SizeFilter` <1 MB / 1-100 MB / >100 MB, `SearchFilters`), applied client-side to the results in `ui/Search.kt` next to the existing
+  source chips (All / Filen / Shared / This device). Three dropdown chips + "Clear filters"; selection survives rotation. Unknown
+  date/size never matches an active date/size filter; size filters exclude folders; document/archive types fall back to the file extension
+  when the MIME is missing. Empty-result text mentions active filters. Unit tests: `SearchFilterTest`.
+- **Storage quota bar**: SDK `client.getUserInfo()` has `storageUsed` / `maxStorage` (verified in the generated bindings). New `QuotaStorage`
+  + `Quota` in :core (`StorageRouter.quota()`, errors -> null), implemented by `FilenStorageProvider`. Home shows a thin bar with
+  "X of Y used on Filen" under the Storage tiles when signed in; hidden until the SDK answers or if it fails; refreshes with `changeCounter`.
+  Not shown in Settings yet. Unit test: `QuotaTest`.
+- Checked: `:core:test :filen:testDebugUnitTest :app:assembleDebug` pass on the host. To check on a device: filter chips with real
+  results (esp. date/size on Filen vs. local items), bar value vs. the Filen web app, bar after an upload.

@@ -244,6 +244,7 @@ fun HomeScreen(env: AppEnv) {
                     else -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
                 }
             }
+            if (signedIn) item { QuotaBar(env, signedIn) }
             // Same component, same layout toggle as the storages above, so they always look like part of the page.
             item { SectionTitle("Tools") }
             item {
@@ -509,5 +510,21 @@ fun FavoritesScreen(env: AppEnv) {
             if (items.isEmpty()) EmptyState("Star files or folders from any location to find them here")
             else FileCollection(env.app.prefs.sort(items), env.app.prefs.grid, env.actions, mixed = true)
         }
+    }
+}
+
+/** Filen account usage ("12.3 GB of 50 GB used"); hidden until the SDK answers and when it can't. */
+@Composable
+private fun QuotaBar(env: AppEnv, signedIn: Boolean) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val quota by produceState<app.filenfiles.core.Quota?>(null, signedIn, env.app.changeCounter) {
+        value = env.app.router.quota() ?: value
+    }
+    val q = quota ?: return
+    val fmt = { b: Long -> android.text.format.Formatter.formatFileSize(ctx, b) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        LinearProgressIndicator({ q.fraction }, Modifier.fillMaxWidth().height(6.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))
+        Text("${fmt(q.used)} of ${fmt(q.max)} used on Filen", style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp))
     }
 }

@@ -158,6 +158,16 @@ interface VersionStorage {
     suspend fun setVersioningEnabled(enabled: Boolean)
 }
 
+/** Account storage usage, for providers that have a quota (Filen). */
+data class Quota(val used: Long, val max: Long) {
+    /** 0..1, clamped; 0 when the plan size is unknown. */
+    val fraction: Float get() = if (max <= 0) 0f else (used.toDouble() / max).coerceIn(0.0, 1.0).toFloat()
+}
+
+interface QuotaStorage {
+    suspend fun quota(): Quota
+}
+
 /** Combines providers, routing by [ItemId.scheme]. */
 class StorageRouter(private val providers: List<StorageProvider>) {
     fun writable(id: ItemId): WritableStorage? =
@@ -173,6 +183,8 @@ class StorageRouter(private val providers: List<StorageProvider>) {
         (providers.firstOrNull { it.owns(item.id) } as? VersionStorage)?.takeIf { it.canVersion(item) }
 
     fun cleanupScopes(): List<CleanupStorage> = providers.mapNotNull { it as? CleanupStorage }
+
+    suspend fun quota(): Quota? = providers.firstNotNullOfOrNull { it as? QuotaStorage }?.let { runCatching { it.quota() }.getOrNull() }
 
     fun sharing(): SharingStorage? = providers.firstNotNullOfOrNull { it as? SharingStorage }
 
