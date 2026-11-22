@@ -170,8 +170,16 @@ private fun ViewControls(env: AppEnv) {
                 SortKey.entries.forEach { k ->
                     DropdownMenuItem(
                         { Text(k.name.lowercase().replaceFirstChar { it.uppercase() }) },
-                        { prefs.updateSort(k, if (prefs.sortKey == k) !prefs.ascending else true); menu = false },
+                        { prefs.updateSort(k, prefs.ascending); menu = false }, // keeps the chosen direction
                         trailingIcon = { if (prefs.sortKey == k) Icon(Icons.Filled.Check, null) },
+                    )
+                }
+                HorizontalDivider()
+                listOf(true to "Ascending", false to "Descending").forEach { (asc, label) ->
+                    DropdownMenuItem(
+                        { Text(label) },
+                        { prefs.updateSort(prefs.sortKey, asc); menu = false },
+                        trailingIcon = { if (prefs.ascending == asc) Icon(Icons.Filled.Check, null) },
                     )
                 }
             }

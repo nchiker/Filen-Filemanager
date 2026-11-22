@@ -433,3 +433,5 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
   check, a dropped connection mid-download.
 - **The test phone now runs 0.4.6 (versionCode 12) from the throwaway build, so the next real release must use versionCode >= 13** (Android refuses downgrades;
   main still says 0.4.5 / 11). The Drive test folder "Filen Files link test (safe to delete)" is still in the owner's Drive.
+- **Sort menu**: ascending/descending are now explicit menu items (checkmarks) under Name / Date / Size; picking a key keeps the current direction (before, tapping the
+  active key flipped the direction and picking another key reset it to ascending). Host build only, not device-tested. Applies to every file list (same `Prefs.sort`).
