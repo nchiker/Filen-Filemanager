@@ -17,7 +17,9 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 1. **Offline pinning** ("Available offline", exempt from the 1 GiB LRU cache) - M. Reuse `materialize`; no SDK dependency. Biggest practical gap.
 2. **Built-in video/audio and text viewers** (Media3 over the materialised file) - M. Removes the Open With bounce for common types.
 3. ~~**Search filters** (type, date, size, source)~~ - built, awaiting device check.
-4. **Public links** (create, copy, revoke) - M. Check whether filen-sdk-rs exposes password/expiry (the TS SDK does); otherwise plain links with a warning.
+4. **Public links** (create, copy, revoke) - M. Checked 2026-11-22: the SDK bindings expose `publicLinkFile`/`publicLinkDir`, `get*LinkStatus`,
+   `update*Link`, `remove*Link` with an optional password, expiry presets (1 h .. 30 days / never) and a download switch. No ready-made share URL
+   seen: it would be built from the link uuid + key; the exact URL format is NOT verified yet.
 5. ~~**Storage quota bar**~~ - built on Home (`getUserInfo`), awaiting device check;
 6. **Cleanup upgrades**: junk/cache sizes, old screenshots, downloaded APKs, per-folder size view - M. Local only.
 

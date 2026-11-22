@@ -350,7 +350,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         if (item.isDirectory) client.shareDir(dirObj(item.id), c, null) else client.shareFile(fileObj(item.id), c)
     }
 
-    override suspend fun addContact(email: String): Unit = io { client.sendContactRequest(email.trim()); Unit }
+    override suspend fun addContact(email: String) { io { client.sendContactRequest(email.trim()) } }
 
     override suspend fun unshare(item: FileItem): Unit = io {
         val roots = outRoots[item.id.value] ?: error("This share is no longer listed; reload and try again")
