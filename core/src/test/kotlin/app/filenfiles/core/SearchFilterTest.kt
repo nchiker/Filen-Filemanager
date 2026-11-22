@@ -18,6 +18,10 @@ class SearchFilterTest {
         assertTrue(TypeFilter.ARCHIVES.matches(file("a.7z", null)))
         assertTrue(TypeFilter.VIDEO.matches(file("a.mp4", "video/mp4")))
         assertTrue(TypeFilter.AUDIO.matches(file("a.mp3", "audio/mpeg")))
+        assertFalse(TypeFilter.ARCHIVES.matches(file("a.tga", "image/x-targa")))
+        assertFalse(TypeFilter.DOCUMENTS.matches(file("a.bin", "application/x-sword")))
+        assertTrue(TypeFilter.ARCHIVES.matches(file("a.tar", "application/x-tar")))
+        assertTrue(TypeFilter.DOCUMENTS.matches(file("a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")))
         assertTrue(TypeFilter.ANY.matches(folder))
     }
 
@@ -37,7 +41,7 @@ class SearchFilterTest {
         assertTrue(SizeFilter.MEDIUM.matches(file("a", null, size = 100 * mb)))
         assertTrue(SizeFilter.LARGE.matches(file("a", null, size = 100 * mb + 1)))
         assertFalse(SizeFilter.SMALL.matches(folder))
-        assertFalse(SizeFilter.SMALL.matches(file("a", null, size = 0))) // unknown size
+        assertTrue(SizeFilter.SMALL.matches(file("a", null, size = 0))) // empty file is a real size
     }
 
     @Test fun combinedAndActive() {

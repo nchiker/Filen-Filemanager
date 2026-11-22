@@ -43,14 +43,16 @@ fun SearchScreen(env: AppEnv) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val signedIn = rememberSignedIn(env)
-    LaunchedEffect(query, signedIn) {
+    // Providers cap results (100); with a filter on, look deeper so matches past the first 100 names aren't missed.
+    val limit = if (filters.active) 1000 else 100
+    LaunchedEffect(query, signedIn, limit) {
         if (query.isBlank()) { results = null; searching = false; return@LaunchedEffect }
         delay(300) // debounce
         searching = true
         results = emptyList()
         try {
             // Providers finish at different speeds (local is fast, a cold Filen index is not): show each as it lands.
-            env.app.router.searchProgressive(query).collect { results = it }
+            env.app.router.searchProgressive(query, limit).collect { results = it }
         } catch (e: CancellationException) { throw e } finally { searching = false }
     }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {

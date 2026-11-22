@@ -184,7 +184,7 @@ class StorageRouter(private val providers: List<StorageProvider>) {
 
     fun cleanupScopes(): List<CleanupStorage> = providers.mapNotNull { it as? CleanupStorage }
 
-    suspend fun quota(): Quota? = providers.firstNotNullOfOrNull { it as? QuotaStorage }?.let { runCatching { it.quota() }.getOrNull() }
+    suspend fun quota(): Quota? = providers.firstNotNullOfOrNull { it as? QuotaStorage }?.let { try { it.quota() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null } }
 
     fun sharing(): SharingStorage? = providers.firstNotNullOfOrNull { it as? SharingStorage }
 
@@ -216,12 +216,12 @@ class StorageRouter(private val providers: List<StorageProvider>) {
         providers.flatMap { runCatching { it.search(query) }.getOrDefault(emptyList()) }
 
     /** Searches all providers concurrently; emits the cumulative result list each time one finishes. */
-    fun searchProgressive(query: String): kotlinx.coroutines.flow.Flow<List<FileItem>> = kotlinx.coroutines.flow.channelFlow {
+    fun searchProgressive(query: String, limit: Int = 100): kotlinx.coroutines.flow.Flow<List<FileItem>> = kotlinx.coroutines.flow.channelFlow {
         val lock = kotlinx.coroutines.sync.Mutex()
         var all = emptyList<FileItem>()
         providers.forEach { p ->
             launch {
-                val found = runCatching { p.search(query) }.getOrDefault(emptyList())
+                val found = try { p.search(query, limit) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { emptyList() }
                 lock.withLock { all = all + found; send(all) }
             }
         }

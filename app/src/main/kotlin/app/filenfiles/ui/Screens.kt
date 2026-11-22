@@ -517,10 +517,10 @@ fun FavoritesScreen(env: AppEnv) {
 @Composable
 private fun QuotaBar(env: AppEnv, signedIn: Boolean) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val quota by produceState<app.filenfiles.core.Quota?>(null, signedIn, env.app.changeCounter) {
-        value = env.app.router.quota() ?: value
-    }
-    val q = quota ?: return
+    // Keep the last good value across refreshes (a failed or slow refresh must not hide the bar).
+    var quota by remember { mutableStateOf<app.filenfiles.core.Quota?>(null) }
+    LaunchedEffect(signedIn, env.app.changeCounter) { env.app.router.quota()?.let { quota = it } }
+    val q = quota?.takeIf { it.max > 0 } ?: return
     val fmt = { b: Long -> android.text.format.Formatter.formatFileSize(ctx, b) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         LinearProgressIndicator({ q.fraction }, Modifier.fillMaxWidth().height(6.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))

@@ -332,3 +332,6 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
   Not shown in Settings yet. Unit test: `QuotaTest`.
 - Checked: `:core:test :filen:testDebugUnitTest :app:assembleDebug` pass on the host. To check on a device: filter chips with real
   results (esp. date/size on Filen vs. local items), bar value vs. the Filen web app, bar after an upload.
+- Review follow-up (code-review of 0b4ac61, all fixed, host-tested only): quota bar keeps its last good value across refreshes and hides when the plan size is 0;
+  with a filter active the search asks providers for up to 1000 matches instead of 100; archive/document MIME matching is explicit instead of substring;
+  0-byte files match "Under 1 MB"; `quota()` / `searchProgressive` no longer swallow CancellationException.

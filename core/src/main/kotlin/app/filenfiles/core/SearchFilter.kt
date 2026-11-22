@@ -16,17 +16,20 @@ enum class TypeFilter(val label: String) {
             VIDEO -> mime.startsWith("video/")
             AUDIO -> mime.startsWith("audio/")
             DOCUMENTS -> mime == "application/pdf" || mime.startsWith("text/") ||
-                mime.contains("word") || mime.contains("excel") || mime.contains("spreadsheet") ||
-                mime.contains("presentation") || mime.contains("powerpoint") || mime.contains("opendocument") ||
+                mime.contains("wordprocessing") || mime == "application/msword" || mime == "application/vnd.ms-excel" ||
+                mime.contains("spreadsheet") || mime.contains("presentation") || mime == "application/vnd.ms-powerpoint" ||
+                mime.startsWith("application/vnd.oasis.opendocument") ||
                 ext in DOC_EXT
-            ARCHIVES -> mime.contains("zip") || mime.contains("rar") || mime.contains("tar") ||
-                mime.contains("7z") || mime.contains("gzip") || ext in ARCHIVE_EXT
+            ARCHIVES -> mime in ARCHIVE_MIME || mime.endsWith("+zip") || ext in ARCHIVE_EXT
             else -> true
         }
     }
 
     private companion object {
         val DOC_EXT = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "txt", "md", "rtf", "csv")
+        val ARCHIVE_MIME = setOf("application/zip", "application/x-zip-compressed", "application/x-7z-compressed",
+            "application/x-rar-compressed", "application/vnd.rar", "application/x-tar", "application/gzip",
+            "application/x-gzip", "application/x-bzip2", "application/x-xz")
         val ARCHIVE_EXT = setOf("zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz")
     }
 }
@@ -39,10 +42,10 @@ enum class DateFilter(val label: String, val days: Int) {
         this == ANY || (item.modified > 0 && item.modified >= now - days * 86_400_000L)
 }
 
-/** Files only (a folder's size is not meaningful); unknown size (<= 0) never matches a size filter. */
+/** Files only (a folder's size is not meaningful); a 0-byte file is a real size. */
 enum class SizeFilter(val label: String, val min: Long, val max: Long) {
     ANY("Any size", 0, Long.MAX_VALUE),
-    SMALL("Under 1 MB", 1, (1L shl 20) - 1),
+    SMALL("Under 1 MB", 0, (1L shl 20) - 1),
     MEDIUM("1–100 MB", 1L shl 20, 100L * (1L shl 20)),
     LARGE("Over 100 MB", 100L * (1L shl 20) + 1, Long.MAX_VALUE);
 
