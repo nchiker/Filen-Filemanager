@@ -378,5 +378,9 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
   removing the folder pin empties the Offline list and clears the badges, no crashes in logcat, `PinSyncWorker` runs finish with SUCCESS.
   Test data: synthetic files in the Drive folder "Filen Files pin test (safe to delete)" (owner deletes it). The notification permission prompt was answered
   "Don't allow" (change in Android settings if wanted).
-  Still NOT tested on a device: edit/rename/delete on the web while pinned, sign-out wipe (never signed out), periodic 12 h sync, multi-GB folders,
-  unpin while offline, DocumentsProvider reads of pinned files, quota value vs. the web app, date/size filter results with real data.
+  Still NOT tested on a device: sign-out wipe (never signed out), periodic 12 h sync, multi-GB folders, unpin while offline, DocumentsProvider reads of pinned files, quota value vs. the web app, date/size filter results with real data.
+- **Web-side changes while pinned, device-tested later the same day** (owner edited/renamed/deleted on the Filen web app, the phone synced with "Sync now"):
+  an edit and a rename were followed (the pin kept its place; the copy was re-downloaded with the new text; the Offline row and the Drive row show the
+  new name with the pin icon); a file deleted/trashed on the web stayed offline marked "No longer in Filen", still opened, vanished from the folder
+  listing, and its X emptied the Offline list. A first agent run strayed into another app on the phone (Back pressed from Home) without opening
+  or changing anything; later runs check the foreground package before every tap.
