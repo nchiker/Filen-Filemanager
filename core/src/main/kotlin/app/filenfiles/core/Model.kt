@@ -190,6 +190,8 @@ class StorageRouter(private val providers: List<StorageProvider>) {
 
     fun trashStorage(): TrashStorage? = providers.firstNotNullOfOrNull { it as? TrashStorage }
 
+    fun linkStorage(): LinkStorage? = providers.firstNotNullOfOrNull { it as? LinkStorage }
+
     fun pinStorage(): PinStorage? = providers.firstNotNullOfOrNull { it as? PinStorage }
 
     fun provider(id: ItemId): StorageProvider =

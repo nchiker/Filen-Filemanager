@@ -25,6 +25,7 @@ import uniffi.filen_sdk_rs.MakeThumbnailInMemoryParams
 import uniffi.filen_sdk_rs.MakeThumbnailInMemoryResult
 import uniffi.filen_sdk_rs.ManagedFuture
 import uniffi.filen_sdk_rs.NonRootDir
+import uniffi.filen_sdk_rs.PasswordState
 import uniffi.filen_sdk_rs.NonRootNormalItem
 import uniffi.filen_sdk_rs.Contact
 import uniffi.filen_sdk_rs.SharedRootItem
@@ -40,7 +41,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage, QuotaStorage, PinStorage {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage, QuotaStorage, PinStorage, LinkStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -375,6 +376,67 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     }
 
     override suspend fun addContact(email: String) { io { client.sendContactRequest(email.trim()) } }
+
+    // ---------- public links ----------
+    // The link key is part of the URL: it is handed to the UI for copying but never logged.
+
+    override fun canLink(item: FileItem) = item.origin == Origin.FILEN_PERSONAL && item.id.key != ROOT
+
+    private fun expiryOf(e: uniffi.filen_types.PublicLinkExpiration) = LinkExpiry.valueOf(e.name)
+    private fun sdkExpiry(e: LinkExpiry) = uniffi.filen_types.PublicLinkExpiration.valueOf(e.name)
+    private fun passwordOf(p: PasswordState, change: PasswordChange): PasswordState = when (change) {
+        PasswordChange.Keep -> p
+        PasswordChange.Remove -> PasswordState.None
+        is PasswordChange.Set -> PasswordState.Known(change.password)
+    }
+    private fun hasPassword(p: PasswordState) = p !is PasswordState.None
+
+    private fun fileLinkInfo(f: FFile, l: uniffi.filen_sdk_rs.FilePublicLink) = LinkInfo(
+        url = (f.meta as? FileMeta.Decoded)?.v1?.key?.let { LinkUrl.build(false, l.linkUuid, it) },
+        expiry = expiryOf(l.expiration), expiresAt = l.expiresAt, hasPassword = hasPassword(l.password), downloadable = l.downloadable,
+    )
+
+    private fun dirLinkInfo(l: uniffi.filen_sdk_rs.DirPublicLinkRw) = LinkInfo(
+        url = l.linkKey?.let { LinkUrl.build(true, l.linkUuid, it) },
+        expiry = expiryOf(l.expiration), expiresAt = l.expiresAt, hasPassword = hasPassword(l.password), downloadable = l.enableDownload,
+    )
+
+    override suspend fun linkOf(item: FileItem): LinkInfo? = io {
+        require(canLink(item)) { "This item cannot have a public link" }
+        if (item.isDirectory) client.getDirLinkStatus(dirObj(item.id))?.let(::dirLinkInfo)
+        else fileObj(item.id).let { f -> client.getFileLinkStatus(f)?.let { fileLinkInfo(f, it) } }
+    }
+
+    override suspend fun saveLink(item: FileItem, settings: LinkSettings): LinkInfo = io {
+        require(canLink(item)) { "This item cannot have a public link" }
+        if (item.isDirectory) {
+            val d = dirObj(item.id)
+            val link = client.getDirLinkStatus(d) ?: client.publicLinkDir(d, null)
+            link.expiration = sdkExpiry(settings.expiry); link.password = passwordOf(link.password, settings.password)
+            link.enableDownload = settings.downloadable
+            dirLinkInfo(client.updateDirLink(d, link))
+        } else {
+            val f = fileObj(item.id)
+            val link = client.getFileLinkStatus(f) ?: client.publicLinkFile(f)
+            link.expiration = sdkExpiry(settings.expiry); link.password = passwordOf(link.password, settings.password)
+            link.downloadable = settings.downloadable
+            fileLinkInfo(f, client.updateFileLink(f, link))
+        }
+    }
+
+    override suspend fun removeLink(item: FileItem): Unit = io {
+        require(canLink(item)) { "This item cannot have a public link" }
+        if (item.isDirectory) client.removeDirLink(dirObj(item.id))
+        else { val f = fileObj(item.id); client.getFileLinkStatus(f)?.let { client.removeFileLink(f, it) } }
+    }
+
+    override suspend fun links(): List<LinkedItem> = io {
+        val all = client.listLinkedItems()
+        buildList {
+            for (d in all.dirs) client.getDirLinkStatus(d)?.let { add(LinkedItem(personalDirItem(d), dirLinkInfo(it))) }
+            for (f in all.files) client.getFileLinkStatus(f)?.let { add(LinkedItem(personalFileItem(f), fileLinkInfo(f, it))) }
+        }
+    }
 
     override suspend fun unshare(item: FileItem): Unit = io {
         val roots = outRoots[item.id.value] ?: error("This share is no longer listed; reload and try again")

@@ -36,6 +36,7 @@ sealed interface Op {
     data class ShareWith(val items: List<FileItem>) : Op
     data class StopSharing(val item: FileItem) : Op
     data class PinOffline(val items: List<FileItem>) : Op
+    data class PublicLink(val item: FileItem) : Op
 }
 
 /** "“name”" for one item, "3 items" for several. */
@@ -96,6 +97,7 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
         null -> Unit
         is Op.ShareWith -> ShareDialog(env, op.items, onClose)
         is Op.PinOffline -> PinDialog(env, op.items, onClose)
+        is Op.PublicLink -> LinkDialog(env, op.item, onClose)
         is Op.StopSharing -> AlertDialog(
             onDismissRequest = onClose,
             title = { Text("Stop sharing “${op.item.name}”?") },

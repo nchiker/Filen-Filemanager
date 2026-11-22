@@ -112,6 +112,8 @@ fun AppRoot(app: FilesApp) {
             shareWith = { op = Op.ShareWith(listOf(it)) },
             canStopSharing = { app.router.sharing()?.canUnshare(it) == true },
             stopSharing = { op = Op.StopSharing(it) },
+            canLink = { app.router.linkStorage()?.canLink(it) == true },
+            publicLink = { op = Op.PublicLink(it) },
             canPin = { app.router.pinStorage()?.canPin(it) == true },
             isPinned = { app.router.pinStorage()?.isPinned(it) == true },
             isOffline = { app.router.pinStorage()?.isOffline(it) == true },
@@ -186,6 +188,7 @@ fun AppRoot(app: FilesApp) {
             composable("search") { SearchScreen(env) }
             composable("trash") { TrashScreen(env) }
             composable("offline") { OfflineScreen(env) }
+            composable("links") { LinksScreen(env) }
             composable("settings") { SettingsScreen(env) }
             composable("cleanup") { CleanupScreen(env) }
             composable("folder/{id}", listOf(navArgument("id") { type = NavType.StringType })) {

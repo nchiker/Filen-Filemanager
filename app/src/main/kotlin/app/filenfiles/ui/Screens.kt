@@ -252,6 +252,7 @@ fun HomeScreen(env: AppEnv) {
                 StorageShortcuts(env.app.prefs.storageStyle, listOfNotNull(
                     Shortcut("tool:cleanup", "Free up space", Icons.Outlined.CleaningServices) { env.nav.navigate("cleanup") },
                     if (signedIn) Shortcut("tool:offline", "Offline", Icons.Outlined.OfflinePin) { env.nav.navigate("offline") } else null,
+                    if (signedIn) Shortcut("tool:links", "Links", Icons.Outlined.Link) { env.nav.navigate("links") } else null,
                     if (signedIn) Shortcut("tool:trash", "Trash", Icons.Outlined.Delete) { env.nav.navigate("trash") } else null,
                 ), ringOffset = (roots as? Load.Ok)?.value?.size ?: 0)
             }

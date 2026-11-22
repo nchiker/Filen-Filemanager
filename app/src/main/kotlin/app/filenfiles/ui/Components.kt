@@ -194,6 +194,8 @@ class ItemActions(
     val pin: (FileItem) -> Unit = {},
     val unpin: (FileItem) -> Unit = {},
     /** Changes whenever pins change, so rows re-read [isOffline]. */
+    val canLink: (FileItem) -> Boolean = { false },
+    val publicLink: (FileItem) -> Unit = {},
     val pinRevision: kotlinx.coroutines.flow.StateFlow<Int> = kotlinx.coroutines.flow.MutableStateFlow(0),
     /** Starts any dialog-driven operation (rename/move/copy/delete...) from a screen that has no list of its own. */
     val run: (Op) -> Unit = {},
@@ -223,6 +225,7 @@ fun ItemMenu(item: FileItem, actions: ItemActions) {
                 if (actions.isPinned(item)) DropdownMenuItem({ Text("Remove from offline") }, { open = false; actions.unpin(item) })
                 else DropdownMenuItem({ Text("Make available offline…") }, { open = false; actions.pin(item) })
             }
+            if (actions.canLink(item)) DropdownMenuItem({ Text("Public link…") }, { open = false; actions.publicLink(item) })
             val fav = actions.isFavorite(item)
             DropdownMenuItem({ Text(if (fav) "Remove from favorites" else "Add to favorites") }, { open = false; actions.toggleFavorite(item) })
             if (actions.canModify(item)) {

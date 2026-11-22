@@ -388,3 +388,14 @@ Design reviewed by a stronger agent before building (key points adopted: stable 
 ## 0.4.5 prep (versionCode 11) - NOT tagged/pushed/released
 Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTES_0.4.5.md`. To release (owner's go-ahead needed):
 `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_0.4.5.md)"` (it runs `tools/publish.sh` = pushes main, builds the signed APK, creates GitHub release v0.4.5).
+
+## Public links - host-built only, NOT device-tested, NOT released (after 0.4.5)
+- `core/PublicLinks.kt`: `LinkExpiry` (SDK presets), `LinkSettings`, `PasswordChange` (Keep / Remove / Set), `LinkInfo`, `LinkStorage`, and `LinkUrl.build`
+  (`https://app.filen.io/#/d|f/<uuid>%23<hex of key string>`; golden vectors from the official filen-cli in `LinkUrlTest`).
+- Filen provider implements `LinkStorage` (`getFile/DirLinkStatus`, `publicLinkFile/Dir`, `updateFile/DirLink`, `removeFile/DirLink`, `listLinkedItems`).
+  File URL key = `DecryptedFileMeta.key`, folder URL key = `DirPublicLinkRw.linkKey`. UNCONFIRMED on a device that these are what the web app expects:
+  open one created link in a browser to confirm.
+- UI: item menu "Public link…" (personal drive items) -> `LinkDialog` (expiry, optional password, allow downloads, Create/Save, Copy, Remove; default expiry 1 week,
+  never "never"); Home > Tools > "Links" lists everything with a link (tap to copy/change/remove). Copy flags the clipboard as sensitive; URLs are never logged.
+  Link changes run on `appScope` so closing the dialog doesn't cancel them. A folder link publishes the whole subtree (the dialog says so).
+- Not done: multi-select, per-link statistics, showing an existing password (the SDK only returns a hash), expiry in absolute dates.
