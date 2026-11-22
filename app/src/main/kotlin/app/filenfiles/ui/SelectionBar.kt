@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.dp
 import app.filenfiles.core.FileItem
 import app.filenfiles.core.Origin
 
-enum class Batch { COPY, MOVE, DELETE, STAR, SAVE, SHARE_WITH, COMPRESS, ADD_TO_ZIP }
+enum class Batch { COPY, MOVE, DELETE, STAR, SAVE, SHARE_WITH, COMPRESS, ADD_TO_ZIP, OFFLINE }
 
 /** Replaces the screen's top bar while items are selected. Actions that don't apply to the whole selection are hidden. */
 @Composable
@@ -21,6 +21,7 @@ fun SelectionBar(env: AppEnv, modifier: Modifier = Modifier, onBatch: (Batch, Li
     val router = env.app.router
     val canModify = items.all { router.modifier(it) != null }
     val canShare = items.all { router.sharing()?.canShare(it) == true }
+    val canPin = items.isNotEmpty() && items.all { router.pinStorage()?.canPin(it) == true }
     val canSave = items.any { it.origin != Origin.LOCAL }
     var more by remember { mutableStateOf(false) }
     Surface(modifier.fillMaxWidth(), tonalElevation = 6.dp, color = MaterialTheme.colorScheme.secondaryContainer) {
@@ -37,6 +38,7 @@ fun SelectionBar(env: AppEnv, modifier: Modifier = Modifier, onBatch: (Batch, Li
                     DropdownMenuItem({ Text("Add to or remove from favorites") }, { more = false; onBatch(Batch.STAR, items) })
                     DropdownMenuItem({ Text("Compress to zip…") }, { more = false; onBatch(Batch.COMPRESS, items) })
                     if (items.none { it.isDirectory }) DropdownMenuItem({ Text("Add to a zip…") }, { more = false; onBatch(Batch.ADD_TO_ZIP, items) })
+                    if (canPin) DropdownMenuItem({ Text("Make available offline…") }, { more = false; onBatch(Batch.OFFLINE, items) })
                     if (canSave) DropdownMenuItem({ Text("Save to device") }, { more = false; onBatch(Batch.SAVE, items) })
                     if (canShare) DropdownMenuItem({ Text("Share with a Filen contact…") }, { more = false; onBatch(Batch.SHARE_WITH, items) })
                 }

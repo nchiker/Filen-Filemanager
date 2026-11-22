@@ -251,6 +251,7 @@ fun HomeScreen(env: AppEnv) {
                 // Ring colours continue after the storages, so every tile on the page keeps a stable colour of its own.
                 StorageShortcuts(env.app.prefs.storageStyle, listOfNotNull(
                     Shortcut("tool:cleanup", "Free up space", Icons.Outlined.CleaningServices) { env.nav.navigate("cleanup") },
+                    if (signedIn) Shortcut("tool:offline", "Offline", Icons.Outlined.OfflinePin) { env.nav.navigate("offline") } else null,
                     if (signedIn) Shortcut("tool:trash", "Trash", Icons.Outlined.Delete) { env.nav.navigate("trash") } else null,
                 ), ringOffset = (roots as? Load.Ok)?.value?.size ?: 0)
             }

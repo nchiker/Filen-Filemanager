@@ -1,5 +1,6 @@
 package app.filenfiles.ui
 
+import app.filenfiles.transfer.PinSyncWorker
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import app.filenfiles.core.FileItem
 import app.filenfiles.core.ItemId
 import app.filenfiles.core.Origin
+import app.filenfiles.core.Pins
+import app.filenfiles.filen.LocalCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -32,6 +35,7 @@ sealed interface Op {
     data class History(val item: FileItem) : Op
     data class ShareWith(val items: List<FileItem>) : Op
     data class StopSharing(val item: FileItem) : Op
+    data class PinOffline(val items: List<FileItem>) : Op
 }
 
 /** "“name”" for one item, "3 items" for several. */
@@ -91,6 +95,7 @@ fun OperationHost(env: AppEnv, op: Op?, onClose: () -> Unit) {
     when (op) {
         null -> Unit
         is Op.ShareWith -> ShareDialog(env, op.items, onClose)
+        is Op.PinOffline -> PinDialog(env, op.items, onClose)
         is Op.StopSharing -> AlertDialog(
             onDismissRequest = onClose,
             title = { Text("Stop sharing “${op.item.name}”?") },
@@ -475,5 +480,47 @@ private fun VersionHistoryDialog(env: AppEnv, item: FileItem, onClose: () -> Uni
             }
         },
         confirmButton = { TextButton(onClose) { Text("Close") } },
+    )
+}
+
+/** Asks before downloading: shows the size (folders are measured with a recursive listing) and the privacy trade-off. */
+@Composable
+private fun PinDialog(env: AppEnv, items: List<FileItem>, onClose: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val pins = env.app.router.pinStorage()
+    var bytes by remember { mutableStateOf<Long?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    LaunchedEffect(items) {
+        try { bytes = pins?.sizeOf(items) } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true }
+    }
+    val free = LocalCache.freeBytes(ctx)
+    val tooBig = bytes?.let { Pins.tooBig(it, free, LocalCache.FREE_MARGIN) } == true
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Make ${itemsLabel(items)} available offline?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(when {
+                    bytes != null -> "About ${android.text.format.Formatter.formatFileSize(ctx, bytes!!)} will be downloaded; ${android.text.format.Formatter.formatFileSize(ctx, free)} is free."
+                    failed -> "Couldn't work out the size (no connection?). The download starts when you are online."
+                    else -> "Measuring…"
+                })
+                if (tooBig) Text("That is more than this phone has room for.", color = MaterialTheme.colorScheme.error)
+                else if ((bytes ?: 0) > Pins.WARN_BYTES) Text("That is a lot of data; use Wi-Fi.", color = MaterialTheme.colorScheme.error)
+                Text("Copies are kept unencrypted on this phone (protected by Android's storage encryption, not by the app lock) " +
+                    "until you remove them or sign out. Folders stay in step with Filen: new files arrive, removed ones go.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton({
+                onClose()
+                env.app.appScope.launch {
+                    pins?.pin(items); PinSyncWorker.syncNow(env.app)
+                    env.snackbar.showSnackbar("Downloading ${itemsLabel(items)} for offline use…")
+                }
+            }, enabled = !tooBig && (bytes != null || failed)) { Text("Make available") }
+        },
+        dismissButton = { TextButton(onClose) { Text("Cancel") } },
     )
 }

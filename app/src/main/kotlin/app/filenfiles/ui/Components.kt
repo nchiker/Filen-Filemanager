@@ -187,6 +187,14 @@ class ItemActions(
     val shareWith: (FileItem) -> Unit = {},
     val canStopSharing: (FileItem) -> Boolean = { false },
     val stopSharing: (FileItem) -> Unit = {},
+    /** Offline pinning: [canPin] = personal-drive items, [isPinned] = pinned on its own, [isOffline] = a copy is on the device. */
+    val canPin: (FileItem) -> Boolean = { false },
+    val isPinned: (FileItem) -> Boolean = { false },
+    val isOffline: (FileItem) -> Boolean = { false },
+    val pin: (FileItem) -> Unit = {},
+    val unpin: (FileItem) -> Unit = {},
+    /** Changes whenever pins change, so rows re-read [isOffline]. */
+    val pinRevision: kotlinx.coroutines.flow.StateFlow<Int> = kotlinx.coroutines.flow.MutableStateFlow(0),
     /** Starts any dialog-driven operation (rename/move/copy/delete...) from a screen that has no list of its own. */
     val run: (Op) -> Unit = {},
 )
@@ -211,6 +219,10 @@ fun ItemMenu(item: FileItem, actions: ItemActions) {
             if (item.origin != Origin.LOCAL) DropdownMenuItem({ Text("Save to device") }, { open = false; actions.saveToDevice(item) })
             if (actions.canShareWith(item)) DropdownMenuItem({ Text("Share with a Filen contact…") }, { open = false; actions.shareWith(item) })
             if (actions.canStopSharing(item)) DropdownMenuItem({ Text("Stop sharing…") }, { open = false; actions.stopSharing(item) })
+            if (actions.canPin(item)) {
+                if (actions.isPinned(item)) DropdownMenuItem({ Text("Remove from offline") }, { open = false; actions.unpin(item) })
+                else DropdownMenuItem({ Text("Make available offline…") }, { open = false; actions.pin(item) })
+            }
             val fav = actions.isFavorite(item)
             DropdownMenuItem({ Text(if (fav) "Remove from favorites" else "Add to favorites") }, { open = false; actions.toggleFavorite(item) })
             if (actions.canModify(item)) {
@@ -329,6 +341,8 @@ fun FileRow(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                val rev by actions.pinRevision.collectAsState()
+                if (rev >= 0 && actions.isOffline(item)) Icon(Icons.Filled.OfflinePin, "Available offline", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 if (actions.isFavorite(item)) Icon(Icons.Filled.Star, "Favorite", tint = Color(0xFFF9AB00), modifier = Modifier.size(18.dp))
                 if (!sel.active) ItemMenu(item, actions) else Spacer(Modifier.size(48.dp)) // keep row height while selecting
             }
@@ -360,6 +374,9 @@ fun FileGridCell(item: FileItem, actions: ItemActions, mixed: Boolean = false) {
                 if (selected) Icon(Icons.Filled.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.align(Alignment.BottomEnd).size(22.dp).background(MaterialTheme.colorScheme.surface, androidx.compose.foundation.shape.CircleShape))
                 if (actions.isFavorite(item)) Icon(Icons.Filled.Star, null, tint = Color(0xFFF9AB00), modifier = Modifier.size(16.dp).align(Alignment.TopStart))
+                val rev by actions.pinRevision.collectAsState()
+                if (rev >= 0 && actions.isOffline(item)) Icon(Icons.Filled.OfflinePin, "Available offline", tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp).align(Alignment.BottomStart).background(MaterialTheme.colorScheme.surface, androidx.compose.foundation.shape.CircleShape))
             }
             Spacer(Modifier.height(6.dp))
             Text(item.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)

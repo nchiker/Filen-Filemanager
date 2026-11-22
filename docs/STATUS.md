@@ -262,7 +262,7 @@ _Provider recheck: cold provider-only start = 0% CPU after the listing; UI start
 - Add-to-zip on a Filen-hosted zip: verified by the owner on their real account.
 
 ## Ideas not done yet
-Built-in video/audio/text viewers, offline pinning, per-recipient revoke / public links,
+Built-in video/audio/text viewers, per-recipient revoke / public links,
 x86_64 build, camera backup content-trigger (instead of the 30-minute poll).
 
 ## Release signing key (never in git)
@@ -335,3 +335,26 @@ Reviewed against Stack 0.13.0 by the Stack session (Ui.java / StackStyle.java). 
 - Review follow-up (code-review of 0b4ac61, all fixed, host-tested only): quota bar keeps its last good value across refreshes and hides when the plan size is 0;
   with a filter active the search asks providers for up to 1000 matches instead of 100; archive/document MIME matching is explicit instead of substring;
   0-byte files match "Under 1 MB"; `quota()` / `searchProgressive` no longer swallow CancellationException.
+
+## Offline pinning ("Make available offline") - host-built only, NOT device-tested
+Design reviewed by a stronger agent before building (key points adopted: stable ids, own directory, pin store consulted first, background job).
+- **Pure logic** `core/Pins.kt` (+ `PinsTest`): `PinState` (user's choices: direct file keys + pinned folder uuids; plus what is on the device),
+  `Pins.reconcile` (wanted remote files vs. copies -> download / local rename / delete / orphaned), `PinStore` (binary state file, atomic write,
+  corrupt/other-account reads as empty), `PinStorage` interface (router: `pinStorage()`).
+- **I/O** `filen/PinManager.kt`: copies live in `filesDir/pinned/files/<stableUuid>/<name>` (not `cache/`, so the 1 GiB LRU cap / 7-day limit / OS cache
+  clearing never touch them; allowBackup is off). Identity = Filen `stableUuid` (survives edits and version restores), stale = current version uuid
+  differs from the downloaded one. Folder pins are rules: each sync re-lists the folder recursively, downloads new/changed files and deletes ones that
+  left it. Renames are done locally (no re-download). A file deleted/trashed elsewhere keeps its copy ("orphaned") until unpinned. `.part` + size check +
+  atomic rename; stray directories nothing refers to are swept. A failed listing changes nothing. Wiped on sign-out/expiry (`onSessionEnded`).
+- **Reads**: `FilenStorageProvider.materialize` and `stat` consult the pin store first, so pinned files open with no network (also through the
+  DocumentsProvider). `file_paths.xml` exposes `pinned/files/` to the FileProvider (Open With / Share).
+- **Sync** `transfer/PinSyncWorker` (WorkManager, deliberately NOT the sequential TransferManager queue): one-time after pin/unpin/"Sync now" (any
+  network), periodic every 12 h on unmetered + battery-not-low, scheduled on sign-in, cancelled on sign-out. Retries up to 3x.
+- **UI**: item menu "Make available offline…" / "Remove from offline"; multi-select entry; confirm dialog with size (recursive for folders), free space,
+  >2 GiB warning and the privacy note (copies are plaintext on the phone, Android storage encryption only, not the app lock); badge on list rows and grid
+  cells; Home > Tools > "Offline" screen (built only from the pin store: files, pinned folders, total size, Sync now, last error, unpin).
+- **Not done / known limits**: personal drive only (no received shares: they have no stableUuid); unpin deletes files at the next sync, which needs a
+  connection; session expiry wipes all pins (re-pin after login); folder pins don't show the file tree offline (only the flat Offline list); no
+  content-hash cross-check; no encryption at rest; offline thumbnails of pinned images come from the pinned file only where Coil loads it directly.
+- **To check on a device**: pin a file and a folder, airplane mode, open from Offline and from Files; add/remove a file in the pinned folder on the web
+  and Sync now; edit a pinned file on the web (re-download); rename; unpin; sign-out wipes `files/pinned`; Open With on a pinned file.

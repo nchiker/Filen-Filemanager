@@ -14,7 +14,7 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 - Trash screen, dark/light/system theme, app lock.
 
 ## Address soon (high value, feasible)
-1. **Offline pinning** ("Available offline", exempt from the 1 GiB LRU cache) - M. Reuse `materialize`; no SDK dependency. Biggest practical gap.
+1. ~~**Offline pinning**~~ - built (personal drive), awaiting device check; see STATUS.
 2. **Built-in video/audio and text viewers** (Media3 over the materialised file) - M. Removes the Open With bounce for common types.
 3. ~~**Search filters** (type, date, size, source)~~ - built, awaiting device check.
 4. **Public links** (create, copy, revoke) - M. Checked 2026-11-22: the SDK bindings expose `publicLinkFile`/`publicLinkDir`, `get*LinkStatus`,

@@ -40,7 +40,7 @@ import uniffi.filen_sdk_rs.File as FFile
  *  - `filen-out:<uuid>` shared BY me   (`filen-out:root` lists my outgoing shares)
  * Shared items keep their sharing context (role, write access) so permissions are respected.
  */
-class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage, QuotaStorage {
+class FilenStorageProvider(private val context: Context, private val session: FilenSession) : StorageProvider, WritableStorage, TrashStorage, FavoriteStorage, SharingStorage, VersionStorage, CleanupStorage, QuotaStorage, PinStorage {
 
     private class DirEntry(val name: String, val parent: String?)
 
@@ -61,6 +61,22 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val sharedParents = ConcurrentHashMap<String, String>()
 
     private val client get() = session.client
+
+    // ---------- offline pins ----------
+    val pins = PinManager(context, session)
+    override val revision get() = pins.revision
+    override val syncing get() = pins.syncing
+    override val lastError get() = pins.lastError
+    override fun isPinned(item: FileItem) = pins.isPinned(item)
+    override fun isOffline(item: FileItem) = pins.isOffline(item)
+    override fun canPin(item: FileItem) = item.origin == Origin.FILEN_PERSONAL && item.id.key != ROOT
+    override suspend fun sizeOf(items: List<FileItem>) = pins.sizeOf(items)
+    override suspend fun pin(items: List<FileItem>) { pins.pin(items) }
+    override suspend fun unpin(items: List<FileItem>) { pins.unpin(items) }
+    override fun offline() = pins.offline()
+    override fun pinnedFolders() = pins.folders()
+    override fun localFile(file: PinnedFile) = pins.localFile(file)
+    override suspend fun sync() = pins.sync()
 
     /** IO-dispatcher wrapper that reports SDK failures to the session (so a rejected login is noticed). */
     private suspend inline fun <T> io(crossinline block: suspend () -> T): T = withContext(Dispatchers.IO) {
@@ -378,6 +394,10 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         if (id.scheme == P) {
             if (id.key == ROOT) return@io null
             personalFiles[id.key]?.let { return@io personalFileItem(it) }
+            // An offline copy answers from the pin store: no network round trip (the DocumentsProvider stats before it opens).
+            pins.offline().firstOrNull { it.version == id.key }?.let { p ->
+                return@io FileItem(id, p.name, false, p.size, p.modified, mimeOf(p.name, p.mime), Origin.FILEN_PERSONAL)
+            }
             client.getFileOptional(id.key)?.let { return@io personalFileItem(it) }
             client.getDirOptional(id.key)?.let { return@io personalDirItem(it) }
             return@io null
@@ -513,6 +533,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         loadedAccount = null; rootCache = null
         listOf(dirCache, personalFiles, personalDirObjs, sharedDirs, sharedFiles, sharedParents, trashedFiles, trashedDirs, outRoots, contactMap).forEach { it.clear() }
         indexFile().delete()
+        pins.wipe()
     }
 
     override suspend fun search(query: String, limit: Int): List<FileItem> = io {
@@ -719,6 +740,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit): MaterializedFile =
         io {
+            if (item.id.scheme == P) pins.copyOf(item.id.key)?.let { (_, f) -> return@io MaterializedFile(f.absolutePath, item.name, item.mime) }
             val safe = item.name.replace('/', '_').ifBlank { "file" }
             val dir = JFile(LocalCache.dir(context, LocalCache.OPEN), "${item.id.scheme}/${item.id.key}-${item.size}").apply { mkdirs() }
             val target = JFile(dir, safe)

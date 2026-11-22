@@ -1,5 +1,6 @@
 package app.filenfiles.ui
 
+import app.filenfiles.transfer.PinSyncWorker
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
@@ -111,6 +112,17 @@ fun AppRoot(app: FilesApp) {
             shareWith = { op = Op.ShareWith(listOf(it)) },
             canStopSharing = { app.router.sharing()?.canUnshare(it) == true },
             stopSharing = { op = Op.StopSharing(it) },
+            canPin = { app.router.pinStorage()?.canPin(it) == true },
+            isPinned = { app.router.pinStorage()?.isPinned(it) == true },
+            isOffline = { app.router.pinStorage()?.isOffline(it) == true },
+            pin = { op = Op.PinOffline(listOf(it)) },
+            unpin = { item ->
+                app.appScope.launch {
+                    app.router.pinStorage()?.unpin(listOf(item)); PinSyncWorker.syncNow(app)
+                    snackbar.showSnackbar("“${item.name}” will be removed from this phone")
+                }
+            },
+            pinRevision = app.filen.revision,
             run = { op = it },
         )
     }
@@ -173,6 +185,7 @@ fun AppRoot(app: FilesApp) {
             composable("favorites") { FavoritesScreen(env) }
             composable("search") { SearchScreen(env) }
             composable("trash") { TrashScreen(env) }
+            composable("offline") { OfflineScreen(env) }
             composable("settings") { SettingsScreen(env) }
             composable("cleanup") { CleanupScreen(env) }
             composable("folder/{id}", listOf(navArgument("id") { type = NavType.StringType })) {
@@ -203,6 +216,7 @@ fun AppRoot(app: FilesApp) {
                 Batch.SAVE -> saveToDownloads(items)
                 Batch.COMPRESS -> op = Op.Compress(items)
                 Batch.ADD_TO_ZIP -> op = Op.AddToZip(items)
+                Batch.OFFLINE -> op = Op.PinOffline(items)
             }
         }
         }
