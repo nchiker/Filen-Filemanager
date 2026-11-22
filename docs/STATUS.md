@@ -415,3 +415,6 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
   scanning" uploads nothing).
 - To test on a device (needs the owner's go-ahead because it publishes): publish a throwaway release with a higher versionCode, tap Update on the banner,
   confirm, then delete the throwaway release and tag. Not tested: a failed signature check, a dropped connection mid-download.
+- **Public links need a paid Filen plan (confirmed 2026-11-22):** the Filen web app gives the same "upgrade your account" answer for this account, so the app's
+  message is correct and nothing is broken. The feature stays built but UNVERIFIED (URL key strings not checked in a browser) and should not be released as
+  "working" until it has been tried once on a plan that includes links.
