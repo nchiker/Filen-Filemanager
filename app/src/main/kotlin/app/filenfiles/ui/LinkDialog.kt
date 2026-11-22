@@ -86,6 +86,11 @@ fun LinkDialog(env: AppEnv, item: FileItem, onClose: () -> Unit, onChanged: () -
                     Switch(downloadable, { downloadable = it }, enabled = !busy)
                     Spacer(Modifier.width(8.dp)); Text("Allow downloads")
                 }
+                info?.url?.let { url ->
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(url, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }

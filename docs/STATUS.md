@@ -399,3 +399,9 @@ Version bumped, README feature list updated, release notes in `docs/RELEASE_NOTE
   never "never"); Home > Tools > "Links" lists everything with a link (tap to copy/change/remove). Copy flags the clipboard as sensitive; URLs are never logged.
   Link changes run on `appScope` so closing the dialog doesn't cancel them. A folder link publishes the whole subtree (the dialog says so).
 - Not done: multi-select, per-link statistics, showing an existing password (the SDK only returns a hash), expiry in absolute dates.
+- **Public links, first device run (2026-11-22, release build, throwaway folder "Filen Files link test (safe to delete)" with one synthetic file):** the menu
+  entry and dialog render as designed (the link text is shown, selectable, in the dialog), but the server answered "Please upgrade your account to use this
+  feature." as soon as the dialog opened (the link-status call) and on "Create link" - so NO link was created and the URL format is still unverified in a
+  browser. Cause not established: either the account's plan has no public links, or a call/option needs a plan the account lacks. To settle it: try
+  creating a link for that file in the Filen web app (right-click > Public link). The error text is shown as the SDK/server gave it; logcat has no
+  fatal errors and never contains `app.filen.io`. The test folder is still in the owner's Drive.
