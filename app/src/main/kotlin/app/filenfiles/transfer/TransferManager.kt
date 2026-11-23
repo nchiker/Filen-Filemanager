@@ -230,6 +230,9 @@ class TransferManager(private val app: FilesApp) {
     /** Documents-provider writes that are queued, running, waiting or failed (not yet dismissed), oldest first. */
     fun providerUploads(): List<Transfer> = _items.value.filter { it.kind == Kind.UPLOAD && it.docId != null && (it.active || it.state == State.FAILED) }
 
+    /** pending document id -> real id, for files other apps wrote through the documents provider and that finished uploading. */
+    val docIds = DocIdMap(File(app.filesDir, "docids.json"))
+
     fun byDocId(docId: String): Transfer? = _items.value.firstOrNull { it.docId == docId }
 
     /** True while the transfer is still pending (queued, running, waiting or failed-but-retryable). */
@@ -471,7 +474,7 @@ class TransferManager(private val app: FilesApp) {
 
     private fun finishOk(id: Long, uploaded: app.filenfiles.core.FileItem? = null) {
         // Receipt first: a provider listing between "no longer pending" and "visible in Filen" must still show the file.
-        if (uploaded != null) find(id)?.let { recentUploads.add(it.parent, uploaded) }
+        if (uploaded != null) find(id)?.let { recentUploads.add(it.parent, uploaded); it.docId?.let { d -> docIds.put(d, uploaded.id.value) } }
         update(id) { it.copy(state = State.DONE, done = it.size, error = null) }
         app.notifyChanged()
         find(id)?.let { app.docsChanged(it.parent) }

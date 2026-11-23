@@ -49,7 +49,11 @@ class StackLinkProvider : ContentProvider() {
     private fun locate(app: FilesApp, arg: String?): Bundle {
         val uri = try { Uri.parse(arg ?: return err("not_filen")) } catch (_: Exception) { return err("not_filen") }
         if (uri.authority != "app.filenfiles.documents" || !DocumentsContract.isDocumentUri(context, uri)) return err("not_filen")
-        val id = ItemId(DocumentsContract.getDocumentId(uri))
+        var docId = DocumentsContract.getDocumentId(uri)
+        if (docId.startsWith("filen-pending:")) { // an app that saved through the provider still holds the pending id
+            docId = app.transfers.docIds.get(docId) ?: return err("pending") // upload not finished yet: ask again later
+        }
+        val id = ItemId(docId)
         if ((id.scheme != "filen" && id.scheme != "filen-in") || id.key == "root") return err("not_filen")
         val path = runBlocking(Dispatchers.IO) { runCatching { app.filen.stackPath(id) }.getOrNull() }
         return Bundle().apply { putString("uuid", id.key); putString("path", path ?: "") }

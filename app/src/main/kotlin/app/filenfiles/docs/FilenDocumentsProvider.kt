@@ -90,6 +90,10 @@ class FilenDocumentsProvider : DocumentsProvider() {
             app.transfers.providerUploads().filter { it.parent == parent }.mapNotNull { pendingRow(it.docId!!) }).distinctBy { it.id }
 
     private fun pendingParent(id: String): String? = pending[id]?.parent?.value ?: app.transfers.byDocId(id)?.parent?.value
+    /** A `filen-pending:` id whose upload has finished -> the real document id (anything else comes back unchanged). */
+    private fun real(documentId: String): String =
+        if (documentId.startsWith(PENDING_PREFIX)) app.transfers.docIds.get(documentId) ?: documentId else documentId
+
     private val pendingSeq = AtomicLong(1)
     /** child document id → parent document id, learned from listings; backs [isChildDocument]. */
     private val parents = ConcurrentHashMap<String, String>()
@@ -265,6 +269,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
+        @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
         if (documentId.startsWith(PENDING_PREFIX)) {
             val row = pendingRow(documentId)
@@ -318,6 +323,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         // The framework calls this for tree URIs before every other call; while locked only an allowed app's own folder answers.
         if (app.appLock.isLockedForOthers) requireSignedIn(parentDocumentId)
         return isDescendant(parentDocumentId, documentId)
@@ -350,7 +356,16 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
         pending[documentId]?.let { return openForWrite(it, mode) }
-        if (documentId.startsWith(PENDING_PREFIX)) throw java.lang.UnsupportedOperationException("This file was already written")
+        if (documentId.startsWith(PENDING_PREFIX)) {
+            val real = real(documentId)
+            if (real == documentId) {
+                // Written and closed, still on its way to Filen: a reader gets the local copy (read-only) until the upload lands.
+                val local = app.transfers.byDocId(documentId)?.file?.takeIf { it.isFile }
+                if (mode == "r" && local != null) return ParcelFileDescriptor.open(local, ParcelFileDescriptor.MODE_READ_ONLY)
+                throw java.lang.UnsupportedOperationException("This file was already written")
+            }
+            return openDocument(real, mode, signal) // uploaded meanwhile: the real document
+        }
         requireSignedIn(doc = documentId.takeIf { mode == "r" }) // writes never pass while locked
         if (mode != "r") throw java.lang.UnsupportedOperationException("Existing Filen files are read-only here")
         val item = io { blocking(signal) { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
@@ -360,6 +375,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun openDocumentThumbnail(documentId: String, sizeHint: Point, signal: CancellationSignal?): AssetFileDescriptor {
+        @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         requireSignedIn()
         val item = io { blocking(signal) { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         val px = maxOf(sizeHint.x, sizeHint.y).coerceIn(128, 512)
@@ -406,6 +422,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun deleteDocument(documentId: String) {
+        @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         requireSignedIn(doc = documentId, write = true) // to the Filen trash; while locked only for a GrantFolderActivity app
         pending.remove(documentId)?.let { it.dir.deleteRecursively(); return }
         app.transfers.byDocId(documentId)?.let { t -> app.transfers.cancel(t.id); app.transfers.dismiss(t.id); notifyParent(t.parent.value); return }
@@ -416,6 +433,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun renameDocument(documentId: String, displayName: String): String? {
+        @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         requireSignedIn()
         val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be renamed")
@@ -425,6 +443,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     override fun moveDocument(sourceDocumentId: String, sourceParentDocumentId: String, targetParentDocumentId: String): String {
+        @Suppress("NAME_SHADOWING") val sourceDocumentId = real(sourceDocumentId)
         requireSignedIn()
         val item = io { blocking { app.router.stat(idOf(sourceDocumentId)) } } ?: throw FileNotFoundException(sourceDocumentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be moved")

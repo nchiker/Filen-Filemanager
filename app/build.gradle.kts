@@ -43,6 +43,9 @@ android {
     }
 }
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation(kotlin("test-junit"))
+    testImplementation("org.json:json:20240303")
     implementation(project(":core"))
     implementation(project(":filen"))
     implementation(project(":local"))
