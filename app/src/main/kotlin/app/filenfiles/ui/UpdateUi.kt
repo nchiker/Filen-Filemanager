@@ -13,19 +13,18 @@ import app.filenfiles.UpdateState
 fun UpdateButton(env: AppEnv) {
     val u = env.app.updater
     val ctx = LocalContext.current
+    // Like Stack: if installing updates isn't allowed yet, explain and open Android's setting BEFORE downloading; the person comes back and taps Update again.
+    var explain by remember { mutableStateOf(false) }
+    if (explain) StackDialog({ explain = false }, "Allow installing updates", buttons = {
+        TextButton({ explain = false }) { Text("Not now") }
+        TextButton({ explain = false; u.openInstallSettings(ctx) }) { Text("Open settings") }
+    }) {
+        Text("Android needs your OK once. Turn it on, then come back and tap Update.")
+    }
     when (val s = u.state) {
-        is UpdateState.Idle, is UpdateState.Failed -> TextButton({ u.start() }) { Text(if (s is UpdateState.Failed) "Try again" else "Update") }
+        is UpdateState.Idle, is UpdateState.Failed -> TextButton({ if (env.app.packageManager.canRequestPackageInstalls()) u.start() else explain = true }) { Text(if (s is UpdateState.Failed) "Try again" else "Update") }
         is UpdateState.Downloading -> Text(if (s.percent > 0) "Downloading ${s.percent}%" else "Downloading…", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelLarge)
-        is UpdateState.Ready, is UpdateState.NeedsPermission -> {
-            var explain by remember { mutableStateOf(false) }
-            TextButton({ if (env.app.packageManager.canRequestPackageInstalls()) u.install(ctx) else explain = true }) { Text("Install") }
-            if (explain) StackDialog({ explain = false }, "Allow installing updates", buttons = {
-                TextButton({ explain = false }) { Text("Not now") }
-                TextButton({ explain = false; u.install(ctx) }) { Text("Open settings") }
-            }) {
-                Text("Android needs your OK once. Turn it on, then tap Install again.")
-            }
-        }
+        is UpdateState.Ready, is UpdateState.NeedsPermission -> TextButton({ if (env.app.packageManager.canRequestPackageInstalls()) u.install(ctx) else explain = true }) { Text("Install") }
         is UpdateState.Installing -> Text("Installing…", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelLarge)
     }
 }

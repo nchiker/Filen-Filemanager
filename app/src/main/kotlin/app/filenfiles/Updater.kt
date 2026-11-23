@@ -76,6 +76,11 @@ class Updater(private val app: Application) {
         }
     }
 
+    /** Opens Android's "install unknown apps" page for this app (the person comes back and taps Update). */
+    fun openInstallSettings(context: Context) {
+        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     fun reset() { if (!busy()) state = UpdateState.Idle }
 
     /** Starts Android's installer. If this app may not install apps yet, opens the setting that allows it and waits. */
