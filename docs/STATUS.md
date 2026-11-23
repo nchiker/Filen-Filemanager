@@ -36,6 +36,15 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 - Waiting for: the owner's go-ahead; AmiPro's retest of save -> reopen -> locate. Build the release WITHOUT `-PstackTestPackage` (that flag is for Stack checks builds only).
 - Not done: folder events (a trashed/moved folder sends nothing for the files inside).
 
+## Resume note (2026-11-22, wound down for a shutdown)
+- **Released:** 0.4.7 only. Everything after it is committed locally on `main` (not pushed, tagged or released): versionCode update check, permission explanations, per-file folder events,
+  sign-in hand-off for GRANT_BACKUP_FOLDER, Create account, cert-pin lists, shorter UI text (docs/UI_TEXT_REVIEW.md), release.sh SHA256SUMS. Next release would be 0.4.8 (code >= 15), built WITHOUT -PstackTestPackage.
+- **TEST phone:** has my test-flag release-signed build (events to Stack's checks package). No second profile was created. Nothing of mine is running or left in the owner's Drive.
+- **Nested-trash re-test:** the fix (files listed before the trash, f6ade03) is installed but not re-tested: trash a folder with a file two levels down, with a Stack record seeded (filenSeed/filenShow), expect removed/trashed for it.
+- **Second-profile plan:** docs/SECOND_PROFILE_TEST.md (keep the profile until after the pairing drill). Not started. Needs the phone from Stack/AmiPro (announce first), then: create account for <test account address> (owner clicks the email link), signed-out GRANT_BACKUP_FOLDER started by Stack's checks build.
+- **Not tested on a device:** Create account, signed-out GRANT_BACKUP_FOLDER, OPEN_SHARED, change notice, pairing (needs two accounts: docs/PAIRING_TEST_PLAN.md). Pairing stays OFF until `-PpairingEnabled=true` after that test and the security review.
+- **Next step:** get the phone, re-test nested trash, then the second-profile plan; then decide 0.4.8 (with or without pairing). Releases need the owner's direct go-ahead in this window.
+
 ## Where things are
 - Repo: `~/Projects/Filen`, committed inside the enclosing `~/Projects` git repo (only `Filen/` is staged by us;
   sibling projects there are deliberately untracked). Commit with `git add Filen && git commit -- Filen`.
