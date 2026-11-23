@@ -55,7 +55,7 @@ fun FolderScreen(env: AppEnv, id: ItemId) {
         TextButton({ explainNotif = false }) { Text("Not now") }
         TextButton({ explainNotif = false; notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }) { Text("Continue") }
     }) {
-        Text("Uploads keep running in the background and show their progress in a notification. Android will ask whether Filen Files may show notifications. Uploads work either way; without it you just won't see the progress outside the app.")
+        Text("Uploads show their progress in a notification. Android asks first.")
     }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {

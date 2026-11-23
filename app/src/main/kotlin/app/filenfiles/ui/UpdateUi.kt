@@ -21,9 +21,9 @@ fun UpdateButton(env: AppEnv) {
             TextButton({ if (env.app.packageManager.canRequestPackageInstalls()) u.install(ctx) else explain = true }) { Text("Install") }
             if (explain) StackDialog({ explain = false }, "Allow installing updates", buttons = {
                 TextButton({ explain = false }) { Text("Not now") }
-                TextButton({ explain = false; u.install(ctx) }) { Text("Continue") }
+                TextButton({ explain = false; u.install(ctx) }) { Text("Open settings") }
             }) {
-                Text("To install an update, Android needs you to allow Filen Files to install apps. The next screen is Android's setting for that; turn it on, then come back and tap Install again. Android still asks you to confirm each update.")
+                Text("Android needs your OK once. Turn it on, then tap Install again.")
             }
         }
         is UpdateState.Installing -> Text("Installing…", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelLarge)

@@ -82,7 +82,7 @@ class GrantFolderActivity : FragmentActivity() {
                             AlertDialog(
                                 onDismissRequest = { cancel("not_signed_in") },
                                 title = { Text("Sign in to Filen first") },
-                                text = { Text("$label needs a Filen account to save backups. Sign in, and you will come straight back here.") },
+                                text = { Text("$label needs a Filen account. You'll come back here after signing in.") },
                                 confirmButton = {
                                     TextButton({
                                         startActivity(Intent(this@GrantFolderActivity, MainActivity::class.java).putExtra(MainActivity.EXTRA_FINISH_AFTER_SIGN_IN, true))
@@ -94,8 +94,8 @@ class GrantFolderActivity : FragmentActivity() {
                         Step.Confirm, Step.Working -> AlertDialog(
                             onDismissRequest = { if (step == Step.Confirm) cancel("user_cancelled") },
                             icon = icon?.let { { Image(it, null, Modifier.size(48.dp)) } },
-                            title = { Text("Let $label save backups in Filen Drive › $folder?") },
-                            text = { Text("$label can then add and remove files in that folder, also while Filen Files is locked.") },
+                            title = { Text("Let $label back up to Filen?") },
+                            text = { Text("$label can add and remove files in “$folder”, even when Filen Files is locked.") },
                             confirmButton = {
                                 TextButton(enabled = step == Step.Confirm, onClick = {
                                     step = Step.Working

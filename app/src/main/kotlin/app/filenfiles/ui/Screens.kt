@@ -565,9 +565,9 @@ private fun CreateAccountPane(env: AppEnv, email: String, onEmail: (String) -> U
     if (waiting) {
         LaunchedEffect(Unit) { while (true) { delay(8_000); if (tryLogin()) break; tries++ } }
         Text("Check your email", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 12.dp))
-        Text("Filen sent a confirmation link to $email. Open it on this phone or any device; this screen carries on by itself once it is confirmed.")
+        Text("Open the link Filen sent to $email. This continues by itself.")
         if (pw.isEmpty()) {
-            Text("The password is needed to continue after you confirm:", modifier = Modifier.padding(top = 12.dp))
+            Text("Enter your password to continue.", modifier = Modifier.padding(top = 12.dp))
             OutlinedTextField(pw, { pw = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
         } else LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 16.dp))
@@ -575,7 +575,7 @@ private fun CreateAccountPane(env: AppEnv, email: String, onEmail: (String) -> U
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
             Button(enabled = !busy && pw.isNotEmpty(), onClick = {
                 busy = true; note = null
-                scope.launch { if (!tryLogin()) note = "Not confirmed yet. Open the link in the email first."; busy = false }
+                scope.launch { if (!tryLogin()) note = "Not confirmed yet."; busy = false }
             }) { Text("I've confirmed") }
             OutlinedButton(enabled = !busy, onClick = {
                 busy = true; note = null
@@ -592,14 +592,14 @@ private fun CreateAccountPane(env: AppEnv, email: String, onEmail: (String) -> U
     OutlinedTextField(email, onEmail, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
     Spacer(Modifier.height(8.dp))
-    OutlinedTextField(pw, { pw = it }, label = { Text("Password (at least 10 characters)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+    OutlinedTextField(pw, { pw = it }, label = { Text("Password (10+ characters)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(pw2, { pw2 = it }, label = { Text("Repeat password") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-    Text("Filen encrypts your files with this password. It cannot be reset: if you forget it, your files cannot be recovered. Write it down somewhere safe.",
+    Text("Filen can't reset this password. If you forget it, your files are lost.",
         style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-    TextButton({ uri.openUri("https://filen.io/terms") }) { Text("Filen's terms apply (filen.io/terms)") }
+    TextButton({ uri.openUri("https://filen.io/terms") }) { Text("Filen's terms") }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     Spacer(Modifier.height(8.dp))
     Button(enabled = !busy && email.contains('@') && pw.length >= 10 && pw == pw2, modifier = Modifier.fillMaxWidth(), onClick = {
@@ -611,6 +611,6 @@ private fun CreateAccountPane(env: AppEnv, email: String, onEmail: (String) -> U
             busy = false
         }
     }) { if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Create account") }
-    if (pw.isNotEmpty() && pw2.isNotEmpty() && pw != pw2) Text("The passwords do not match.", color = MaterialTheme.colorScheme.error)
+    if (pw.isNotEmpty() && pw2.isNotEmpty() && pw != pw2) Text("Passwords don't match.", color = MaterialTheme.colorScheme.error)
     TextButton(onBack) { Text("I already have an account") }
 }

@@ -153,7 +153,7 @@ fun AppRoot(app: FilesApp) {
         val uuid = wanted ?: return@LaunchedEffect
         if (session is FilenSession.State.Unknown) return@LaunchedEffect
         app.pendingOpenShared = null
-        if (session !is FilenSession.State.LoggedIn) { snackbar.showSnackbar("Sign in to Filen to open this document"); return@LaunchedEffect }
+        if (session !is FilenSession.State.LoggedIn) { snackbar.showSnackbar("Sign in to open this"); return@LaunchedEffect }
         val item = runCatching { app.router.stat(ItemId("filen-in:$uuid")) }.getOrNull()
         when {
             item == null -> snackbar.showSnackbar("No longer shared with you")

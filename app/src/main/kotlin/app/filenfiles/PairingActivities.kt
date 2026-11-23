@@ -79,7 +79,7 @@ abstract class PairingActivity : FragmentActivity() {
                         Step.NotSignedIn -> AlertDialog(
                             onDismissRequest = { cancel("not_signed_in") },
                             title = { Text("Sign in to Filen first") },
-                            text = { Text("Open Filen Files and sign in, then try again from $callerLabel.") },
+                            text = { Text("Open Filen Files and sign in, then try again.") },
                             confirmButton = { TextButton({ cancel("not_signed_in") }) { Text("OK") } },
                         )
                         Step.Confirm, is Step.Working -> AlertDialog(
@@ -150,12 +150,12 @@ abstract class PairingActivity : FragmentActivity() {
 /** Partner phone: `GRANT_RECEIVED_FOLDER` with `OWNER_EMAIL` -> a read-only tree grant on the owner's "Stack shared" folder. */
 class GrantReceivedFolderActivity : PairingActivity() {
     private var owner = ""
-    override val title: (String) -> String = { "Let $it read documents $owner shares with you?" }
-    override val body get() = "$callerLabel can then read the folder “$FOLDER” that $owner shares with you in Filen. It cannot change it, also while Filen Files is locked."
+    override val title: (String) -> String = { "Let $it read $owner's folder?" }
+    override val body get() = "$callerLabel can read “$FOLDER” from $owner, but not change it."
 
     override fun prepare(): Boolean {
         owner = intent.getStringExtra(EXTRA_OWNER_EMAIL)?.trim().orEmpty()
-        if (!owner.contains('@') || owner.length > 254 || owner.any { it.isWhitespace() || it.isISOControl() }) { cancel("failed", "No account to connect to"); return false }
+        if (!owner.contains('@') || owner.length > 254 || owner.any { it.isWhitespace() || it.isISOControl() }) { cancel("failed", "No account to connect"); return false }
         readNonce()
         return true
     }
@@ -165,7 +165,7 @@ class GrantReceivedFolderActivity : PairingActivity() {
         withContext(Dispatchers.IO) { filen.connectTo(owner) }
         val mine = (app.session.state.value as? FilenSession.State.LoggedIn)?.email
         val code = nonce?.let { n -> mine?.let { pairCode(n, it) } }
-        step = Step.Working("Waiting for $owner to finish on their phone…" + (code?.let { "\n\nYour code: $it. $owner will see the same code; it must match." } ?: ""))
+        step = Step.Working("Waiting for $owner…" + (code?.let { "\n\nYour code: $it. It must match $owner's screen." } ?: ""))
         val end = System.currentTimeMillis() + TIMEOUT_MS
         var found: ItemId? = null
         while (found == null && System.currentTimeMillis() < end) {
@@ -190,12 +190,12 @@ class GrantShareFolderActivity : PairingActivity() {
     private var folderName = FOLDER
     private fun codeOf(r: FilenStorageProvider.ContactRequest) = nonce?.let { pairCode(it, r.email) }
     override val title: (String) -> String = { _ ->
-        chosen?.let { "Share Filen Drive › $folderName with ${it.email}?" } ?: "Waiting for your partner to scan…"
+        chosen?.let { "Share “$folderName” with ${it.email}?" } ?: "Waiting for your partner…"
     }
     override val body get() = chosen?.let { c ->
-        "$callerLabel can then add and replace files in that folder, also while Filen Files is locked. ${c.email} will be able to read it." +
-            (codeOf(c)?.let { "\n\nCode ${it}: check it matches your partner's screen. If it does not, tap Cancel." } ?: "")
-    } ?: "Your partner scans the code on their phone; this will continue by itself."
+        "$callerLabel can edit it; ${c.email} can read it." +
+            (codeOf(c)?.let { "\n\nCode $it must match your partner's screen. If not, tap Cancel." } ?: "")
+    } ?: "Your partner scans the code on their phone."
 
     override fun prepare(): Boolean {
         readNonce()
@@ -215,7 +215,7 @@ class GrantShareFolderActivity : PairingActivity() {
 
     @Composable override fun Extra() {
         if (requests.size > 1) Column(Modifier.padding(top = 8.dp)) {
-            Text("Several people asked to connect. Who is your partner?")
+            Text("Which one is your partner?")
             requests.forEach { r ->
                 Row(Modifier.fillMaxWidth().selectable(chosen?.uuid == r.uuid) { chosen = r }, verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(chosen?.uuid == r.uuid, { chosen = r }); Text(r.email + (codeOf(r)?.let { " — code $it" } ?: ""))
