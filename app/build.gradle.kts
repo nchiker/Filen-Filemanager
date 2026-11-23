@@ -19,6 +19,7 @@ android {
         val pairing = (project.findProperty("pairingEnabled") as String?) == "true"
         buildConfigField("boolean", "PAIRING_ENABLED", "$pairing")
         manifestPlaceholders["pairingEnabled"] = "$pairing"
+        manifestPlaceholders["stackLinkAuthority"] = ((project.findProperty("stackTestPackage") as String?)?.takeIf { it.isNotBlank() } ?: "org.stackdocs.app") + ".link"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     buildFeatures { compose = true; buildConfig = true }

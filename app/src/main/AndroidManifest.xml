@@ -14,6 +14,8 @@
     <queries>
         <provider android:authorities="org.stackdocs.app.link" />
         <package android:name="org.stackdocs.app" />
+        <!-- Stack checks builds only (-PstackTestPackage); the real Stack's authority again otherwise. -->
+        <provider android:authorities="${stackLinkAuthority}" />
         <package android:name="app.amipro.editor" />
     </queries>
 

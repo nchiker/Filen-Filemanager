@@ -4,7 +4,6 @@ import android.content.Context
 import android.webkit.MimeTypeMap
 import app.filenfiles.core.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -771,8 +770,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val MAX_FOLDERS = 80
 
     /** UUIDs of the files under [dir] (cached as a side effect), capped: at most [MAX_FILES] files and [MAX_FOLDERS] folder listings. */
-    private suspend fun filesUnder(dir: Dir): List<String> {
-        val out = ArrayList<String>()
+    private suspend fun filesUnder(dir: Dir, out: MutableList<String> = ArrayList()): List<String> {
         val queue = ArrayDeque<Dir>().apply { add(dir) }
         var lists = 0
         while (queue.isNotEmpty() && lists++ < MAX_FOLDERS && out.size < MAX_FILES) {
@@ -792,11 +790,16 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
     }
 
-    /** Starts listing a folder's files before it is trashed; the result is awaited afterwards to send the events. */
-    private fun filesBeforeTrash(folder: FileItem): kotlinx.coroutines.Deferred<List<String>>? {
-        if (!folder.isDirectory || folder.id.scheme != P || !StackLink.available(context)) return null
-        val d = personalDirObjs[folder.id.key] ?: return null
-        return stackScope.async { runCatching { filesUnder(d) }.getOrDefault(emptyList()) }
+    /**
+     * The files under a folder, listed BEFORE it is trashed (a trashed folder can no longer be listed). Bounded to a few
+     * seconds so a slow network never holds up the trash; whatever was found by then is used, the rest is caught by Stack's next stat.
+     */
+    private suspend fun filesBeforeTrash(folder: FileItem): List<String> {
+        if (!folder.isDirectory || folder.id.scheme != P || !StackLink.available(context)) return emptyList()
+        val d = personalDirObjs[folder.id.key] ?: return emptyList()
+        val found = ArrayList<String>()
+        kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { filesUnder(d, found) } }
+        return found.toList()
     }
 
     private fun notifyRemoved(item: FileItem, reason: String) {
@@ -893,7 +896,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
         indexRemoveSubtree(item.id)
         notifyRemoved(item, "trashed")
-        if (inside != null) stackEvent { inside.await().forEach { StackLink.removed(context, it, "trashed"); kotlinx.coroutines.yield() } }
+        if (inside.isNotEmpty()) stackEvent { inside.forEach { StackLink.removed(context, it, "trashed"); kotlinx.coroutines.yield() } }
         undo
     }
 
