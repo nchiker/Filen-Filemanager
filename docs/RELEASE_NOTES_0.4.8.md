@@ -1,4 +1,4 @@
-Filen Files 0.4.8 (DRAFT, pairing OFF; version is still 0.4.7 / code 14 in the build files, bump to 0.4.8 / code >= 15 at release)
+Filen Files 0.4.8 (DRAFT, pairing OFF; build files are 0.4.8 / code 15)
 
 - New: **Create a Filen account** from the sign-in screen. The app waits while you confirm your email, then continues by itself.
 - New: Stack can ask you to pick a backup folder even if Filen is signed out. You sign in, then return to the dialog.

@@ -11,8 +11,8 @@ android {
         applicationId = "app.filenfiles"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.4.7"
+        versionCode = 15
+        versionName = "0.4.8"
         // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (certificate not pinned). Empty in shipped builds.
         buildConfigField("String", "STACK_TEST_PACKAGE", "\"${(project.findProperty("stackTestPackage") as String?) ?: ""}\"")
         // Partner pairing (GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER, account) is OFF unless built with -PpairingEnabled=true (0.4.8 plan).
