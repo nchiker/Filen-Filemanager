@@ -3,11 +3,37 @@
 Pairing (`account`, GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER) is built but OFF in 0.4.7. Build the test APK with `-PpairingEnabled=true` and, for a Stack checks build,
 `-PstackTestPackage=<checks package>`. Never release with either flag. Sign for the test phone only with the release key (owner's go-ahead needed); never publish the test build.
 
-## What the owner must set up
-1. A **second Filen account** (a free one is enough; sharing needs no paid plan). Call it B; the real account is A. Do not use anyone else's account.
-2. **Two phones, or one phone with a second user/profile**, each with Filen Files (test build) and Stack (checks build), both online. The TEST phone is A. B can be a second Android user (Settings > System > Users) or an emulator/second phone.
-3. Sign in to A on one, B on the other. B must not be a contact of A yet (remove the contact on both sides first so the request path is tested).
-4. The Stack session confirms its side sends `PAIR_NONCE` (32 hex) and passes the same value to both actions.
+## Accounts and where each one lives
+Three free **test** Filen accounts supplied by the owner (their addresses are in the gitignored `docs/PRIVATE_NOTES.md`, never in this public repo, logs or commit messages). The owner's real account is not involved anywhere in this test.
+
+| Role | Account | Where | What it does |
+|---|---|---|---|
+| A (owner side) | test 1 | **x86_64 emulator** (window on the owner's screen) | shows the pairing QR, receives B's contact request, shares "Stack shared" |
+| B (partner side) | test 2 | **TEST phone, second Android user** | scans the QR, waits, receives the read-only grant |
+| C (impostor) | test 3 | Filen **web app** in the owner's browser (no device) | only for step 7: sends A a second contact request |
+
+Steps that need C: **7 only** (two pending contact requests, A must pick the one whose code matches B). Everything else is A + B. Send C's request after step 3 and before A taps Continue in step 4.
+
+## Where B lives on the phone (which keeps the owner's sign-in safest)
+1. **Second Android user (recommended).** `pm create-user` (see docs/SECOND_PROFILE_TEST.md). Filen Files and Stack keep separate data per user, so user 0 (the owner's sign-in, Stack's and Ami Pro's state) is never touched; the junk profile holds only test 2. Cost: the screen of user 0 is hidden while the profile is in front, so nobody else may run device checks until I switch back. Removing the profile afterwards restores the phone exactly.
+2. Sign out of the owner's account on the phone: **not recommended**, it puts the real sign-in (and the offline pins/wipe-on-sign-out behaviour) at risk and the owner would have to log in again.
+3. The planned weekend wipe: **not needed** and worse (it also erases Stack's and Ami Pro's test state). If the owner wipes anyway, finish and remove the profile before.
+Open point for the Stack session: does Stack's checks build install per user, and can a user-N Stack take part (it must be the partner-side Stack)?
+
+## What the owner must supply or approve (each in my window, not by a peer's message)
+- Account creation: the owner types each password and clicks each email link; I never see or store passwords. Create **A** and **B** through the in-app "Create account" (this also tests that feature); **C** in the web app.
+- The weekend desk time: the QR is shown on the emulator window and scanned with the phone's camera (ask the Stack session whether Stack also has a paste-code fallback; if so no camera/desk is needed).
+- Downloads: a throwaway emulator again (Android 13 x86_64, about 1.4 GB; the one used for the update test was deleted). Keeping an emulator for pairing needs the owner's new word.
+- Builds: `-PpairingEnabled=true` and `-PstackTestPackage=<checks package>` test builds, **release-key signed, test only, never published, never committed with the flags**; two APKs: arm64 for the phone, and an **x86_64 build** for the emulator (the Rust SDK has only an arm64 library, so `./build-rust.sh x86_64` (~5 min) is needed or sign-in on the emulator cannot work; the update test never signed in, so it did not need it). Each signing and the pairing flag need the owner's explicit go-ahead.
+- Stack: a checks build of Stack that runs on x86_64 (or its own emulator build) and one for user N on the phone; the Stack session confirms it sends `PAIR_NONCE` (32 hex) and passes the same value to both actions.
+- B must not be a contact of A before step 1 (remove the contact on both sides first).
+
+## Order
+1. Second-profile plan, parts 1-4 (create user, test 2 created in-app, signed-out GRANT_BACKUP_FOLDER); keep the profile.
+2. Emulator + A (in-app Create account), x86_64 build, install Stack checks build there.
+3. This plan, steps 1-17, then clean up. The pairing drill **replaces** step 6 of the second-profile plan (no separate drill).
+4. Release gate below. Remove the profile (`pm remove-user N`) only after the drill and any partner-journey drill, and say so to the owner.
+Weekend: the real partner setup (2026-11-28/29) happens after this, with the owner's real accounts and the released build; the test profile and emulator are gone by then.
 
 ## Steps (expected result in brackets)
 **Pairing handshake**
