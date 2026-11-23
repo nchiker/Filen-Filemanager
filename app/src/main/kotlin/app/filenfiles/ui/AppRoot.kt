@@ -142,6 +142,20 @@ fun AppRoot(app: FilesApp) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
         return
     }
+    // OPEN_SHARED from another app: open that received item, or say it is gone.
+    val wanted = app.pendingOpenShared
+    LaunchedEffect(wanted, session) {
+        val uuid = wanted ?: return@LaunchedEffect
+        if (session is FilenSession.State.Unknown) return@LaunchedEffect
+        app.pendingOpenShared = null
+        if (session !is FilenSession.State.LoggedIn) { snackbar.showSnackbar("Sign in to Filen to open this document"); return@LaunchedEffect }
+        val item = runCatching { app.router.stat(ItemId("filen-in:$uuid")) }.getOrNull()
+        when {
+            item == null -> snackbar.showSnackbar("No longer shared with you")
+            item.isDirectory -> nav.navigate(folderRoute(item.id))
+            else -> nav.navigate(viewerRoute(item.id))
+        }
+    }
     // A rejected session (revoked/changed password) can't be retried away: go to sign-in.
     LaunchedEffect(session) {
         if (session is FilenSession.State.Expired && nav.currentDestination?.route != "login") {

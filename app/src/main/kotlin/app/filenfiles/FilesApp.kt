@@ -97,6 +97,9 @@ class FilesApp : Application() {
     var changeCounter by mutableIntStateOf(0); private set
     fun notifyChanged() { changeCounter++ }
 
+    /** UUID asked for by another app via OPEN_SHARED (Stack opening a partner's document); consumed by AppRoot. */
+    var pendingOpenShared by mutableStateOf<String?>(null)
+
     /** Tells document-picker clients that a folder's contents changed. */
     fun docsChanged(folder: app.filenfiles.core.ItemId) {
         runCatching {

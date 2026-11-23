@@ -63,6 +63,7 @@ object StackLink {
         send(context, "unshared", JSONObject().put("contract", 1).put("filen_uuid", uuid))
 
     private fun send(context: Context, method: String, message: JSONObject) {
+        if (testPackage.isNotEmpty()) android.util.Log.d("StackLinkTest", "$method $message") // test builds only
         try {
             // Only talk to the real Stack: the provider's package must be pinned (an app could register the authority first).
             val target = testPackage.ifEmpty { STACK_PACKAGE }

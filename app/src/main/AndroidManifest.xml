@@ -33,6 +33,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Stack opens a partner's document: extras app.filenfiles.extra.UUID (required) and .PATH (hint). Navigation only. -->
+            <intent-filter>
+                <action android:name="app.filenfiles.action.OPEN_SHARED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
         <!-- Other apps (Stack) ask for a backup folder in Filen Drive; one Allow tap, no browsing. See GrantFolderActivity. -->
         <activity

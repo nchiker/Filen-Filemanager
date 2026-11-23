@@ -14,6 +14,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as FilesApp
+        handleOpenShared(intent)
         setContent {
             val dark = when (app.prefs.themeMode) {
                 ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
@@ -42,6 +43,20 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenShared(intent)
+    }
+
+    /** `app.filenfiles.action.OPEN_SHARED` with `app.filenfiles.extra.UUID` (required; PATH is only a hint and unused). Navigation only. */
+    private fun handleOpenShared(intent: android.content.Intent?) {
+        if (intent?.action != ACTION_OPEN_SHARED) return
+        val uuid = intent.getStringExtra(EXTRA_UUID)?.trim()?.lowercase()
+        if (uuid != null && UUID.matches(uuid)) (application as FilesApp).pendingOpenShared = uuid
+        intent.action = null // a rotation or recreate must not reopen it
+    }
+
     override fun onStart() {
         super.onStart()
         val app = application as FilesApp
@@ -53,5 +68,11 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         (application as FilesApp).appLock.onStop()
+    }
+
+    companion object {
+        const val ACTION_OPEN_SHARED = "app.filenfiles.action.OPEN_SHARED"
+        const val EXTRA_UUID = "app.filenfiles.extra.UUID"
+        private val UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     }
 }
