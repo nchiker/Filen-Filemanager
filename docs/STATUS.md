@@ -19,6 +19,16 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 - **Signing/release rules:** key lives outside the repo (`~/APK-Keys/filen`, see private notes); never push, tag, release or sign without the owner's explicit go-ahead;
   `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_<version>.md)"` publishes.
 
+## Stack link, slice 5 (built 2026-11-22, device check in progress)
+- `app.filenfiles.stacklink` (`stacklink/StackLinkProvider.kt`): `locate(uri)` -> {uuid, path} or {error: not_filen}; `lookup(uuid)` -> {exists, path, trashed, shared}.
+  Callers pinned by package + release-cert SHA-256 (`filen/StackLink.kt`: Stack `org.stackdocs.app`, Ami Pro `app.amipro.editor`); others get `refused`;
+  `locked` / `not_signed_in` / `unreachable` otherwise.
+- Events to Stack's `org.stackdocs.app.link` (`moved`, `removed`, `unshared`, message formats in Stack's STACK_LINK_CONTRACT.md) come from `FilenStorageProvider`
+  (rename, move, trash, restore, delete for good, empty trash, public-link removal, unshare). Files only; folders send nothing. Best effort, off the caller's path,
+  failures swallowed. Provider package + certificate are checked before sending.
+- Test-only: `-PstackTestPackage=<pkg>` (BuildConfig, empty in shipped builds) points events at a Stack checks build and accepts it as a caller. Never set it for a release.
+- Test phone: installed a locally signed (release key, unpublished) build with that flag; Stack session seeds records (`filenSeed` / `filenShow` instrumentation).
+
 ## Where things are
 - Repo: `~/Projects/Filen`, committed inside the enclosing `~/Projects` git repo (only `Filen/` is staged by us;
   sibling projects there are deliberately untracked). Commit with `git add Filen && git commit -- Filen`.

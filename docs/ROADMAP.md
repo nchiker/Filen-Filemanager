@@ -41,6 +41,7 @@ Play Store pages did not load, so "what's new" lists were not used and the Andro
 - Localisation (string extraction + a few languages) - M.
 - Tablet/large-screen layout and an accessibility audit (TalkBack, font scale) - M.
 - Share target for scans handed over from the Stack app - S.
+- Stack link slice 5 (locate/lookup provider, moved/removed/unshared events): built 2026-11-22, device check in progress; folder events not sent.
 - Also still open from earlier notes: "Add to a zip…" for zips reached only through search (needs a parent lookup), password-protected zips.
 
 ## Deliberately skip
