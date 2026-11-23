@@ -508,3 +508,10 @@ Android 13 (API 33) default x86_64 emulator (no Play Store, ~1.4 GB download, no
 3. Cancel then retry: Cancel -> the banner shows Install (file kept); Install -> the confirmation again.
 4. Nothing in Download: /sdcard/Download stayed empty throughout. Update tapped -> package ended at 0.4.7 / code 14.
 Emulator, image, SDK copy and the test APK were deleted afterwards. Not tested: a failed checksum/signature, a dropped download.
+
+### 0.4.8 local build installed on the TEST phone (2026-11-23)
+- History: the 45 unpushed commits were rewritten to remove a test-account address (tree-filter on docs/ + message filter); backup of the old main is the local branch `backup/main-before-rewrite-2026-11-23` (still contains the address: never push that branch; delete it once the owner is satisfied). refs/original removed. Nothing pushed.
+- Bump commit 339cf7d: 0.4.8 / code 15. Built with `./gradlew --no-daemon :app:testDebugUnitTest :core:test :filen:testDebugUnitTest :app:assembleRelease --offline`: exit 0; no `-PstackTestPackage`, no `-PpairingEnabled`; signed with the release key (same cert SHA-256 59ccca4c... as 0.4.7). The APK is `app/build/outputs/apk/release/app-release.apk` (not committed, not published, not tagged).
+- Installed over 0.4.7 on the TEST phone with `adb install -r`: 0.4.8 / 15. Checks: (1) opens straight into Drive, still signed in; (2) upload, rename, Open (chooser), Share dialog (lists the existing contact, no request sent) work; (3) trash + Undo restore works, my test items deleted for good; (4) pairing activities not resolvable (disabled), `account` answers unsupported by code, a lookup from the now-unpinned Stack checks build answers `refused`; (5) Settings > Update check says up to date. NOT verified: `locate`/`lookup` answering a pinned caller (real Stack package), since the checks build is no longer accepted.
+- Deleted forever from the owner's Trash: `nested-trash-A` and my `v048-check`. The rest of the Trash is untouched (no Empty).
+- Side effect: the Stack checks build no longer receives Filen events (test flag gone), as expected.
