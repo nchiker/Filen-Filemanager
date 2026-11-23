@@ -158,7 +158,7 @@ class FilesApp : Application() {
                         android.provider.DocumentsContract.buildRootsUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY), null)
                 }
                 when (it) {
-                    is FilenSession.State.LoggedIn -> { transfers.resume(); PinSyncWorker.schedule(this@FilesApp) }
+                    is FilenSession.State.LoggedIn -> { transfers.resume(); PinSyncWorker.schedule(this@FilesApp); app.filenfiles.stacklink.SharedWatcher.apply { schedule(this@FilesApp); startListening(this@FilesApp) } }
                     is FilenSession.State.LoggedOut -> { transfers.clearAll(); app.filenfiles.backup.CameraBackup.disableAndForget(this@FilesApp) }
                     else -> Unit
                 }
@@ -169,6 +169,7 @@ class FilesApp : Application() {
                     // Decrypted copies of cloud files must not outlive the session.
                     is FilenSession.State.LoggedOut, is FilenSession.State.Expired -> runCatching {
                         PinSyncWorker.cancelAll(this@FilesApp)
+                        app.filenfiles.stacklink.SharedWatcher.cancel(this@FilesApp)
                         filen.onSessionEnded()
                         serverFavIds = emptySet(); recentFavToggles.clear(); listingCache.clear()
                         LocalCache.wipeDecrypted(this@FilesApp)

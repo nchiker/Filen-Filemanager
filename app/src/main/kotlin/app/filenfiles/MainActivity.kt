@@ -5,6 +5,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import app.filenfiles.stacklink.SharedWatcher
 import app.filenfiles.ui.AppRoot
 import app.filenfiles.ui.FilesTheme
 import app.filenfiles.ui.LockScreen
@@ -63,6 +64,7 @@ class MainActivity : FragmentActivity() {
         app.appLock.onStart()
         app.warmUpSearchIndex()
         app.checkForUpdate()
+        SharedWatcher.requestCheck(app, 2_000)
     }
 
     override fun onStop() {
