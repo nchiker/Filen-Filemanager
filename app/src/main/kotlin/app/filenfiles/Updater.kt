@@ -62,7 +62,7 @@ class Updater(private val app: Application) {
             state = try {
                 val r = UpdateChecker.latest() ?: throw IllegalStateException("Could not reach GitHub")
                 val url = r.apkUrl ?: throw IllegalStateException("The newest release has no app file")
-                if (!UpdateChecker.isNewer(r, installedVersion)) throw IllegalStateException("You already have the newest version")
+                if (!UpdateChecker.isNewer(r, installedVersion, runCatching { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(app.packageManager.getPackageInfo(app.packageName, 0)) }.getOrNull())) throw IllegalStateException("You already have the newest version")
                 release = r
                 state = UpdateState.Downloading(r.version, 0)
                 withContext(Dispatchers.IO) { fetchApk(r, url) }

@@ -52,6 +52,12 @@ object StackLink {
 
     // ---------- Filen -> Stack events ----------
 
+    /** Whether the real Stack (or the test build's target) is installed; lets callers skip work that only feeds Stack. */
+    fun available(context: Context): Boolean = try {
+        val target = testPackage.ifEmpty { STACK_PACKAGE }
+        context.packageManager.resolveContentProvider("$target.link", 0)?.packageName == target
+    } catch (_: Throwable) { false }
+
     fun moved(context: Context, uuid: String, path: String) =
         send(context, "moved", JSONObject().put("contract", 1).put("filen_uuid", uuid).put("path", path))
 

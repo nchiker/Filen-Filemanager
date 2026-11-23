@@ -4,6 +4,7 @@ import android.content.Context
 import android.webkit.MimeTypeMap
 import app.filenfiles.core.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -766,6 +767,38 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         stackEvent { filePath(item.id.key)?.let { StackLink.moved(context, item.id.key, it) } }
     }
 
+    private val MAX_FILES = 300
+    private val MAX_FOLDERS = 80
+
+    /** UUIDs of the files under [dir] (cached as a side effect), capped: at most [MAX_FILES] files and [MAX_FOLDERS] folder listings. */
+    private suspend fun filesUnder(dir: Dir): List<String> {
+        val out = ArrayList<String>()
+        val queue = ArrayDeque<Dir>().apply { add(dir) }
+        var lists = 0
+        while (queue.isNotEmpty() && lists++ < MAX_FOLDERS && out.size < MAX_FILES) {
+            val res = runCatching { client.listDir(AnyNormalDir.Dir(queue.removeFirst())) }.getOrNull() ?: continue
+            res.files.forEach { if (out.size < MAX_FILES) { personalFileItem(it); out.add(it.uuid) } }
+            res.dirs.forEach { personalDirItem(it); queue.add(it) }
+        }
+        return out
+    }
+
+    /** A folder moved, renamed or restored: its files' paths changed, so tell Stack for each (capped, one after another). */
+    private fun notifyFolderMoved(folder: FileItem) {
+        if (!folder.isDirectory || folder.id.scheme != P || !StackLink.available(context)) return
+        stackEvent {
+            val d = personalDirObjs[folder.id.key] ?: return@stackEvent
+            for (uuid in filesUnder(d)) { filePath(uuid)?.let { StackLink.moved(context, uuid, it) }; kotlinx.coroutines.yield() }
+        }
+    }
+
+    /** Starts listing a folder's files before it is trashed; the result is awaited afterwards to send the events. */
+    private fun filesBeforeTrash(folder: FileItem): kotlinx.coroutines.Deferred<List<String>>? {
+        if (!folder.isDirectory || folder.id.scheme != P || !StackLink.available(context)) return null
+        val d = personalDirObjs[folder.id.key] ?: return null
+        return stackScope.async { runCatching { filesUnder(d) }.getOrDefault(emptyList()) }
+    }
+
     private fun notifyRemoved(item: FileItem, reason: String) {
         if (item.id.scheme == P && !item.isDirectory) stackEvent { StackLink.removed(context, item.id.key, reason) }
     }
@@ -837,7 +870,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             personalDirItem(client.updateDirMetadata(dirObj(item.id), DirectoryMetaChanges(name = newName, created = CreatedTime.Keep)))
         else
             personalFileItem(client.updateFileMetadata(fileObj(item.id), FileMetaChanges(name = newName, created = CreatedTime.Keep)))
-        indexUpsert(out, null); notifyMoved(out); out
+        indexUpsert(out, null); notifyMoved(out); notifyFolderMoved(out); out
     }
 
     override suspend fun move(item: FileItem, newParent: ItemId): FileItem = io {
@@ -845,20 +878,22 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val parent = personalDir(newParent)
         val out = if (item.isDirectory) personalDirItem(client.moveDir(dirObj(item.id), parent))
         else personalFileItem(client.moveFile(fileObj(item.id), parent))
-        indexUpsert(out, newParent.normalizedParent()); notifyMoved(out); out
+        indexUpsert(out, newParent.normalizedParent()); notifyMoved(out); notifyFolderMoved(out); out
     }
 
     override suspend fun trash(item: FileItem): (suspend () -> Unit)? = io {
         require(canModify(item)) { "This item cannot be deleted" }
+        val inside = filesBeforeTrash(item)
         val undo: suspend () -> Unit = if (item.isDirectory) {
             val t = client.trashDir(dirObj(item.id))
-            ({ io { indexUpsert(personalDirItem(client.restoreDir(t)), null); indexMarkDirty() } })
+            ({ io { val di = personalDirItem(client.restoreDir(t)); indexUpsert(di, null); indexMarkDirty(); notifyFolderMoved(di) } })
         } else {
             val t = client.trashFile(fileObj(item.id))
             ({ io { val f = client.restoreFile(t); val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi) } })
         }
         indexRemoveSubtree(item.id)
         notifyRemoved(item, "trashed")
+        if (inside != null) stackEvent { inside.await().forEach { StackLink.removed(context, it, "trashed"); kotlinx.coroutines.yield() } }
         undo
     }
 
@@ -883,7 +918,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     override suspend fun restore(item: FileItem): Unit = io {
         if (item.isDirectory) {
             val d = client.restoreDir(trashedDirs[item.id.key] ?: error("Trash changed; reload it"))
-            indexUpsert(personalDirItem(d), personalParentId(d.parent)); indexMarkDirty() // its subtree comes back too
+            val di = personalDirItem(d); indexUpsert(di, personalParentId(d.parent)); indexMarkDirty() /* its subtree comes back too */; notifyFolderMoved(di)
         } else {
             val f = client.restoreFile(trashedFiles[item.id.key] ?: error("Trash changed; reload it"))
             val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi)

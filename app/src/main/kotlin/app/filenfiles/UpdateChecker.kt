@@ -13,7 +13,11 @@ object UpdateChecker {
     const val RELEASES_PAGE = "https://github.com/$REPO/releases/latest"
 
     /** [apkSize] 0 and [sha256] null when GitHub gave none. */
-    data class Release(val version: String, val pageUrl: String, val apkUrl: String?, val apkSize: Long = 0, val sha256: String? = null, val notes: String = "")
+    data class Release(val version: String, val pageUrl: String, val apkUrl: String?, val apkSize: Long = 0, val sha256: String? = null, val notes: String = "",
+        /** From a `versionCode: N` marker in the release text (tools/release.sh adds it); null for older releases. */
+        val versionCode: Long? = null)
+
+    private val CODE = Regex("versionCode:\\s*(\\d+)")
 
     /** Newest published release, or null if it can't be determined (offline, rate-limited, no release yet). */
     suspend fun latest(): Release? = withContext(Dispatchers.IO) {
@@ -35,10 +39,15 @@ object UpdateChecker {
                         break
                     }
                 }
-                Release(j.getString("tag_name"), j.optString("html_url", RELEASES_PAGE), apk, size, sha, j.optString("body").trim().take(1200))
+                val body = j.optString("body").trim()
+                Release(j.getString("tag_name"), j.optString("html_url", RELEASES_PAGE), apk, size, sha,
+                    body.replace(CODE, "").trim().take(1200), CODE.find(body)?.groupValues?.get(1)?.toLongOrNull())
             } finally { c.disconnect() }
         }.getOrNull()
     }
 
-    fun isNewer(release: Release, installed: String) = Versions.isNewer(release.version, installed)
+    /** Newer by versionCode when the release states one (the same name can carry a higher code), otherwise by name. */
+    fun isNewer(release: Release, installed: String, installedCode: Long? = null): Boolean =
+        if (release.versionCode != null && installedCode != null) release.versionCode > installedCode
+        else Versions.isNewer(release.version, installed)
 }

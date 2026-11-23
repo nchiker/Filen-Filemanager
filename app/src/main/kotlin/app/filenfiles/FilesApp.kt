@@ -114,6 +114,7 @@ class FilesApp : Application() {
     lateinit var prefs: Prefs; private set
     lateinit var appLock: AppLock; private set
 
+    val installedCode: Long? get() = runCatching { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageManager.getPackageInfo(packageName, 0)) }.getOrNull()
     val installedVersion: String get() = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "0"
 
     /** Asks GitHub for the newest release (at most daily unless [force]); remembers whether it is newer than this build. */
@@ -123,7 +124,7 @@ class FilesApp : Application() {
             val r = UpdateChecker.latest()
             if (r != null) {
                 prefs.lastUpdateCheck = System.currentTimeMillis()
-                if (UpdateChecker.isNewer(r, installedVersion)) prefs.setAvailableUpdate(r.version, r.apkUrl ?: r.pageUrl)
+                if (UpdateChecker.isNewer(r, installedVersion, installedCode)) prefs.setAvailableUpdate(r.version, r.apkUrl ?: r.pageUrl)
                 else prefs.setAvailableUpdate(null, null)
             }
             kotlinx.coroutines.withContext(Dispatchers.Main) { onDone(r) }

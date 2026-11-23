@@ -10,6 +10,11 @@ REPO="${FILEN_GH_REPO:-nchiker/Filen-Filemanager}"
 VERSION="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)"
 NOTES="Install: download the APK on an arm64 Android 8.0+ phone and open it (allow installs from your browser/file manager when asked). Then sign in to Filen, or skip for local-only, and grant All files access. Updates install over the previous release."
 [ "${1:-}" = "--notes" ] && NOTES="$2"
+# The in-app updater compares versionCode: put it in the release text (the app strips this line before showing the notes).
+CODE="$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)"
+NOTES="$NOTES
+
+versionCode: $CODE"
 
 KS="${FILEN_KEYSTORE_PROPS:-$HOME/APK-Keys/filen/keystore.properties}"
 [ -f "$KS" ] || { echo "No release keystore at $KS - refusing to publish a debug-signed APK" >&2; exit 1; }

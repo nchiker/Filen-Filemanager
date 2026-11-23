@@ -16,7 +16,16 @@ fun UpdateButton(env: AppEnv) {
     when (val s = u.state) {
         is UpdateState.Idle, is UpdateState.Failed -> TextButton({ u.start() }) { Text(if (s is UpdateState.Failed) "Try again" else "Update") }
         is UpdateState.Downloading -> Text(if (s.percent > 0) "Downloading ${s.percent}%" else "Downloading…", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelLarge)
-        is UpdateState.Ready, is UpdateState.NeedsPermission -> TextButton({ u.install(ctx) }) { Text("Install") }
+        is UpdateState.Ready, is UpdateState.NeedsPermission -> {
+            var explain by remember { mutableStateOf(false) }
+            TextButton({ if (env.app.packageManager.canRequestPackageInstalls()) u.install(ctx) else explain = true }) { Text("Install") }
+            if (explain) StackDialog({ explain = false }, "Allow installing updates", buttons = {
+                TextButton({ explain = false }) { Text("Not now") }
+                TextButton({ explain = false; u.install(ctx) }) { Text("Continue") }
+            }) {
+                Text("To install an update, Android needs you to allow Filen Files to install apps. The next screen is Android's setting for that; turn it on, then come back and tap Install again. Android still asks you to confirm each update.")
+            }
+        }
         is UpdateState.Installing -> Text("Installing…", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelLarge)
     }
 }

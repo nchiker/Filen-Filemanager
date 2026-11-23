@@ -41,14 +41,21 @@ fun FolderScreen(env: AppEnv, id: ItemId) {
     var newFolder by remember { mutableStateOf(false) }
     // Android 13+: without this the upload notification (foreground service) is hidden. Asked when the first upload starts.
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var explainNotif by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty() && writable != null) {
             env.app.transfers.enqueueUploads(id, uris)
             if (android.os.Build.VERSION.SDK_INT >= 33 &&
                 androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            ) explainNotif = true // explained first; Android's own prompt follows only after "Continue"
         }
+    }
+    if (explainNotif) StackDialog({ explainNotif = false }, "Show upload progress?", buttons = {
+        TextButton({ explainNotif = false }) { Text("Not now") }
+        TextButton({ explainNotif = false; notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }) { Text("Continue") }
+    }) {
+        Text("Uploads keep running in the background and show their progress in a notification. Android will ask whether Filen Files may show notifications. Uploads work either way; without it you just won't see the progress outside the app.")
     }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
