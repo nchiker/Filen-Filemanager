@@ -71,6 +71,8 @@ class Updater(private val app: Application) {
                 dir.deleteRecursively()
                 UpdateState.Failed("${e.message ?: "The download failed"}. Nothing was changed.")
             }
+            // Like Stack: once the file is checked and installing is already allowed, go straight to Android's confirmation (one tap).
+            if (state is UpdateState.Ready && app.packageManager.canRequestPackageInstalls()) install(app)
         }
     }
 
