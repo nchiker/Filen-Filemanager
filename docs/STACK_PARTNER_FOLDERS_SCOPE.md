@@ -55,3 +55,10 @@ Stack session: add the owner email to the QR and the "Continue" step, call the n
 - The full handshake needs **two Filen accounts on two phones or profiles**. That is the existing S7-6 item, and the owner has to supply the second account.
 - Security-sensitive (it shares data with another account): include it in the higher-tier review Stack has already asked for.
 - Shipping it needs a new Filen Files release, and only the owner can give the go-ahead for that.
+
+## Security note: pairing code (added 2026-11-22 after Stack's security review)
+Auto-picking "the one recent contact request" would let someone who photographed the QR send their own request and receive the folder. So:
+- Stack puts a random 32-char lowercase hex nonce in the QR and passes it, unchanged, as String extra `app.filenfiles.extra.PAIR_NONCE` to both `GRANT_RECEIVED_FOLDER` (partner) and `GRANT_SHARE_FOLDER` (owner). A missing or malformed nonce means the behaviour above (older Stack).
+- Code = 4 digits: first 4 bytes of SHA-256(`nonce:` + the partner's own Filen email, trimmed and lowercased) as an unsigned number mod 10000, zero-padded.
+- The partner's waiting dialog shows "Your code: NNNN". The owner's Allow dialog shows the code beside each incoming request's email (a radio list when there are several), with "check it matches your partner's screen; if it does not, tap Cancel". Nobody types it.
+- Nothing is shared without Allow; only pinned callers may start either action.

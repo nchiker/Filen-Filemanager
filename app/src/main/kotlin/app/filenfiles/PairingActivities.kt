@@ -125,7 +125,22 @@ abstract class PairingActivity : FragmentActivity() {
         finish()
     }
 
+    /** Optional random value from the pairing QR (32 hex chars); ties the owner's Allow to the person who scanned it. */
+    protected var nonce: String? = null
+
+    protected fun readNonce() {
+        nonce = intent.getStringExtra(EXTRA_PAIR_NONCE)?.lowercase()?.takeIf { it.matches(Regex("[0-9a-f]{32}")) }
+    }
+
     companion object {
+        const val EXTRA_PAIR_NONCE = "app.filenfiles.extra.PAIR_NONCE"
+
+        /** Compare-only code: 4 digits from the nonce and the partner's own Filen email. Both phones compute it; nobody types it. */
+        fun pairCode(nonce: String, partnerEmail: String): String {
+            val h = java.security.MessageDigest.getInstance("SHA-256").digest("$nonce:${partnerEmail.trim().lowercase()}".toByteArray())
+            val n = ((h[0].toInt() and 0xff) shl 24 or ((h[1].toInt() and 0xff) shl 16) or ((h[2].toInt() and 0xff) shl 8) or (h[3].toInt() and 0xff)).toLong() and 0xffffffffL
+            return "%04d".format(n % 10000)
+        }
         const val FOLDER = "Stack shared"
         const val POLL_MS = 3_000L
         const val TIMEOUT_MS = 5 * 60_000L
@@ -141,13 +156,16 @@ class GrantReceivedFolderActivity : PairingActivity() {
     override fun prepare(): Boolean {
         owner = intent.getStringExtra(EXTRA_OWNER_EMAIL)?.trim().orEmpty()
         if (!owner.contains('@') || owner.length > 254 || owner.any { it.isWhitespace() || it.isISOControl() }) { cancel("failed", "No account to connect to"); return false }
+        readNonce()
         return true
     }
 
     override suspend fun onAllow() {
         val filen = app.filen
         withContext(Dispatchers.IO) { filen.connectTo(owner) }
-        step = Step.Working("Waiting for $owner to finish on their phone…")
+        val mine = (app.session.state.value as? FilenSession.State.LoggedIn)?.email
+        val code = nonce?.let { n -> mine?.let { pairCode(n, it) } }
+        step = Step.Working("Waiting for $owner to finish on their phone…" + (code?.let { "\n\nYour code: $it. $owner will see the same code; it must match." } ?: ""))
         val end = System.currentTimeMillis() + TIMEOUT_MS
         var found: ItemId? = null
         while (found == null && System.currentTimeMillis() < end) {
@@ -170,18 +188,23 @@ class GrantShareFolderActivity : PairingActivity() {
     private var requests by mutableStateOf<List<FilenStorageProvider.ContactRequest>>(emptyList())
     private var chosen by mutableStateOf<FilenStorageProvider.ContactRequest?>(null)
     private var folderName = FOLDER
+    private fun codeOf(r: FilenStorageProvider.ContactRequest) = nonce?.let { pairCode(it, r.email) }
     override val title: (String) -> String = { _ ->
         chosen?.let { "Share Filen Drive › $folderName with ${it.email}?" } ?: "Waiting for your partner to scan…"
     }
-    override val body get() = chosen?.let { "$callerLabel can then add and replace files in that folder, also while Filen Files is locked. ${it.email} will be able to read it." }
-        ?: "Your partner scans the code on their phone; this will continue by itself."
+    override val body get() = chosen?.let { c ->
+        "$callerLabel can then add and replace files in that folder, also while Filen Files is locked. ${c.email} will be able to read it." +
+            (codeOf(c)?.let { "\n\nCode ${it}: check it matches your partner's screen. If it does not, tap Cancel." } ?: "")
+    } ?: "Your partner scans the code on their phone; this will continue by itself."
 
     override fun prepare(): Boolean {
+        readNonce()
         folderName = GrantFolderActivity.cleanName(intent.getStringExtra(GrantFolderActivity.EXTRA_FOLDER_NAME)) ?: FOLDER
         lifecycleScope.launch {
             while (true) { // watch for the partner's request until the user acts
                 runCatching { withContext(Dispatchers.IO) { app.filen.incomingRequests() } }.getOrNull()?.let { list ->
                     requests = list
+                    // With several requests the owner picks by comparing codes; with one (and no nonce) it is pre-selected.
                     if (chosen == null || list.none { it.uuid == chosen?.uuid }) chosen = list.singleOrNull()
                 }
                 delay(POLL_MS)
@@ -195,7 +218,7 @@ class GrantShareFolderActivity : PairingActivity() {
             Text("Several people asked to connect. Who is your partner?")
             requests.forEach { r ->
                 Row(Modifier.fillMaxWidth().selectable(chosen?.uuid == r.uuid) { chosen = r }, verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(chosen?.uuid == r.uuid, { chosen = r }); Text(r.email)
+                    RadioButton(chosen?.uuid == r.uuid, { chosen = r }); Text(r.email + (codeOf(r)?.let { " — code $it" } ?: ""))
                 }
             }
         }
