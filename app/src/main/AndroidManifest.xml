@@ -52,6 +52,7 @@
         <!-- Stack partner pairing (pinned caller only; see PairingActivities.kt). -->
         <activity
             android:name=".GrantReceivedFolderActivity"
+            android:enabled="${pairingEnabled}"
             android:exported="true"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.FilenFiles.Dialog">
@@ -62,6 +63,7 @@
         </activity>
         <activity
             android:name=".GrantShareFolderActivity"
+            android:enabled="${pairingEnabled}"
             android:exported="true"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.FilenFiles.Dialog">

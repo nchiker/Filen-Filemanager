@@ -31,9 +31,9 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 
 ## 0.4.7 prep (2026-11-22, local only: not tagged, pushed, signed for release or published)
 - Version 0.4.7 (code 14), notes in `docs/RELEASE_NOTES_0.4.7.md`. Contents: Stack link slice 5 (locate/lookup, moved/removed/unshared), OPEN_SHARED, change notice,
-  pending-id read-back fix, pairing trio (`account`, GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER).
-- Waiting for: the owner's go-ahead; a two-account device test of the pairing trio and OPEN_SHARED/change notice (one account cannot receive a share); the higher-tier
-  security review of the pairing code; AmiPro's retest of save -> reopen -> locate. Build the release WITHOUT `-PstackTestPackage` (that flag is for Stack checks builds only).
+  pending-id read-back fix. **Pairing (`account`, GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER) is built but OFF**: components disabled and `account` answers `unsupported`
+  unless built with `-PpairingEnabled=true`. Re-enable in 0.4.8 after a two-account device test and a security review (decision of the orchestrator, 2026-11-22).
+- Waiting for: the owner's go-ahead; AmiPro's retest of save -> reopen -> locate. Build the release WITHOUT `-PstackTestPackage` (that flag is for Stack checks builds only).
 - Not done: folder events (a trashed/moved folder sends nothing for the files inside).
 
 ## Where things are

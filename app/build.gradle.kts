@@ -15,6 +15,10 @@ android {
         versionName = "0.4.7"
         // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (certificate not pinned). Empty in shipped builds.
         buildConfigField("String", "STACK_TEST_PACKAGE", "\"${(project.findProperty("stackTestPackage") as String?) ?: ""}\"")
+        // Partner pairing (GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER, account) is OFF unless built with -PpairingEnabled=true (0.4.8 plan).
+        val pairing = (project.findProperty("pairingEnabled") as String?) == "true"
+        buildConfigField("boolean", "PAIRING_ENABLED", "$pairing")
+        manifestPlaceholders["pairingEnabled"] = "$pairing"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     buildFeatures { compose = true; buildConfig = true }

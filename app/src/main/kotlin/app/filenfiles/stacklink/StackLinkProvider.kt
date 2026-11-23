@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.provider.DocumentsContract
+import app.filenfiles.BuildConfig
 import app.filenfiles.FilesApp
 import app.filenfiles.core.ItemId
 import app.filenfiles.filen.FilenSession
@@ -40,7 +41,7 @@ class StackLinkProvider : ContentProvider() {
             when (method) {
                 "locate" -> locate(app, arg)
                 "lookup" -> lookup(app, arg)
-                "account" -> Bundle().apply { putString("email", (app.session.state.value as FilenSession.State.LoggedIn).email) }
+                "account" -> if (!BuildConfig.PAIRING_ENABLED) err("unsupported") else Bundle().apply { putString("email", (app.session.state.value as FilenSession.State.LoggedIn).email) }
                 else -> err("invalid")
             }
         } catch (_: Exception) { err("unreachable") }
