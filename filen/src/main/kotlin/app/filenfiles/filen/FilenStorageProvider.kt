@@ -377,6 +377,45 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override suspend fun addContact(email: String) { io { client.sendContactRequest(email.trim()) } }
 
+    // ---------- Stack pairing (contacts are the channel; see docs/STACK_PARTNER_FOLDERS_SCOPE.md) ----------
+
+    class ContactRequest(val uuid: String, val email: String)
+    enum class Contacted { CONNECTED, REQUESTED }
+
+    suspend fun incomingRequests(): List<ContactRequest> = io {
+        client.listIncomingContactRequests().map { ContactRequest(it.uuid, it.email) }
+    }
+
+    /** Partner side: make [email] a contact. Accepts their pending request, or sends ours (once). */
+    suspend fun connectTo(email: String): Contacted = io {
+        val want = email.trim()
+        require(want.isNotEmpty() && '@' in want) { "That is not an email address" }
+        if (client.getContacts().any { it.email.equals(want, true) }) return@io Contacted.CONNECTED
+        client.listIncomingContactRequests().firstOrNull { it.email.equals(want, true) }?.let {
+            client.acceptContactRequest(it.uuid); return@io Contacted.CONNECTED
+        }
+        if (client.listOutgoingContactRequests().none { it.email.equals(want, true) }) client.sendContactRequest(want)
+        Contacted.REQUESTED
+    }
+
+    /** Partner side: the top-level received folder [name] that [ownerEmail] shared with us, or null if it has not arrived. */
+    suspend fun receivedFolderFrom(ownerEmail: String, name: String): ItemId? = io {
+        val hit = client.listInSharedRoot().dirs.firstOrNull { d ->
+            (d.sharingRole as? SharingRole.Receiver)?.v1?.email.equals(ownerEmail.trim(), true) && dirName(d.inner.meta) == name
+        } ?: return@io null
+        listShared(ItemId("$IN:$ROOT")) // fill the registry so the documents provider can open it right away
+        ItemId("$IN:${hit.inner.uuid}")
+    }
+
+    /** Owner side: accept [request] (if any), then share personal folder [folder] with that contact (once). */
+    suspend fun shareFolderWith(folder: ItemId, email: String, request: ContactRequest?): Unit = io {
+        require(folder.scheme == P && folder.key != ROOT) { "Only a folder in your own drive can be shared" }
+        if (request != null) client.acceptContactRequest(request.uuid)
+        val contact = client.getContacts().firstOrNull { it.email.equals(email.trim(), true) } ?: error("That person is not a contact yet")
+        val dir = dirObj(folder)
+        if (client.listOutShared(contact).dirs.none { it.inner.uuid == dir.uuid }) client.shareDir(dir, contact, null)
+    }
+
     // ---------- public links ----------
     // The link key is part of the URL: it is handed to the UI for copying but never logged.
 

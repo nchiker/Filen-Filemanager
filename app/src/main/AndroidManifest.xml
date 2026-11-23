@@ -50,6 +50,27 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <!-- Stack partner pairing (pinned caller only; see PairingActivities.kt). -->
+        <activity
+            android:name=".GrantReceivedFolderActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FilenFiles.Dialog">
+            <intent-filter>
+                <action android:name="app.filenfiles.action.GRANT_RECEIVED_FOLDER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".GrantShareFolderActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FilenFiles.Dialog">
+            <intent-filter>
+                <action android:name="app.filenfiles.action.GRANT_SHARE_FOLDER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".transfer.TransferService"
             android:exported="false"

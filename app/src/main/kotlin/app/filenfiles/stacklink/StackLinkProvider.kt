@@ -20,6 +20,7 @@ import org.json.JSONObject
  * ask, identified by kernel uid -> package -> certificate SHA-256 ([StackLink.callerAllowed]); everyone else is refused.
  *  - `locate(uri)`: the Filen document URI -> {uuid, path}, or {error: "not_filen"}.
  *  - `lookup(uuid)`: -> {exists, path, trashed, shared}.
+ *  - `account()`: -> {email}, the signed-in Filen account (Stack puts it in the pairing QR).
  * Errors: `refused` (caller not pinned), `locked` (app lock on), `not_signed_in`, `unreachable` (Filen could not be asked).
  */
 class StackLinkProvider : ContentProvider() {
@@ -39,6 +40,7 @@ class StackLinkProvider : ContentProvider() {
             when (method) {
                 "locate" -> locate(app, arg)
                 "lookup" -> lookup(app, arg)
+                "account" -> Bundle().apply { putString("email", (app.session.state.value as FilenSession.State.LoggedIn).email) }
                 else -> err("invalid")
             }
         } catch (_: Exception) { err("unreachable") }
