@@ -26,6 +26,7 @@ import app.filenfiles.ui.FilesTheme
 import app.filenfiles.ui.LockScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -72,12 +73,24 @@ class GrantFolderActivity : FragmentActivity() {
                     if (app.appLock.isLocked) { LockScreen(app, this@GrantFolderActivity); return@Box }
                     when (step) {
                         Step.Loading -> CircularProgressIndicator()
-                        Step.NotSignedIn -> AlertDialog(
-                            onDismissRequest = { cancel("not_signed_in") },
-                            title = { Text("Sign in to Filen first") },
-                            text = { Text("Open Filen Files and sign in, then try again from $label.") },
-                            confirmButton = { TextButton({ cancel("not_signed_in") }) { Text("OK") } },
-                        )
+                        Step.NotSignedIn -> {
+                            // Sign-in happens in Filen Files itself and closes by itself, which brings this dialog back to finish the grant.
+                            LaunchedEffect(Unit) {
+                                app.session.state.first { it is FilenSession.State.LoggedIn }
+                                step = Step.Confirm
+                            }
+                            AlertDialog(
+                                onDismissRequest = { cancel("not_signed_in") },
+                                title = { Text("Sign in to Filen first") },
+                                text = { Text("$label needs a Filen account to save backups. Sign in, and you will come straight back here.") },
+                                confirmButton = {
+                                    TextButton({
+                                        startActivity(Intent(this@GrantFolderActivity, MainActivity::class.java).putExtra(MainActivity.EXTRA_FINISH_AFTER_SIGN_IN, true))
+                                    }) { Text("Sign in") }
+                                },
+                                dismissButton = { TextButton({ cancel("not_signed_in") }) { Text("Cancel") } },
+                            )
+                        }
                         Step.Confirm, Step.Working -> AlertDialog(
                             onDismissRequest = { if (step == Step.Confirm) cancel("user_cancelled") },
                             icon = icon?.let { { Image(it, null, Modifier.size(48.dp)) } },

@@ -142,6 +142,11 @@ fun AppRoot(app: FilesApp) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
         return
     }
+    // Opened only to sign in for the backup-folder dialog: go back to it once signed in.
+    val hostActivity = LocalContext.current as? android.app.Activity
+    LaunchedEffect(session) {
+        if (session is FilenSession.State.LoggedIn && app.finishAfterSignIn) { app.finishAfterSignIn = false; hostActivity?.finish() }
+    }
     // OPEN_SHARED from another app: open that received item, or say it is gone.
     val wanted = app.pendingOpenShared
     LaunchedEffect(wanted, session) {

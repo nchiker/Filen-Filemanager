@@ -16,6 +16,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         val app = application as FilesApp
         handleOpenShared(intent)
+        app.finishAfterSignIn = intent.getBooleanExtra(EXTRA_FINISH_AFTER_SIGN_IN, false)
         setContent {
             val dark = when (app.prefs.themeMode) {
                 ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
@@ -75,6 +76,8 @@ class MainActivity : FragmentActivity() {
     companion object {
         const val ACTION_OPEN_SHARED = "app.filenfiles.action.OPEN_SHARED"
         const val EXTRA_UUID = "app.filenfiles.extra.UUID"
+        /** Set by GrantFolderActivity: close this screen as soon as the person has signed in, so they land back in the grant dialog. */
+        const val EXTRA_FINISH_AFTER_SIGN_IN = "app.filenfiles.extra.FINISH_AFTER_SIGN_IN"
         private val UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     }
 }

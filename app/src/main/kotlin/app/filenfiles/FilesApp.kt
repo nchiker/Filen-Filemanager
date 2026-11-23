@@ -99,6 +99,8 @@ class FilesApp : Application() {
 
     /** UUID asked for by another app via OPEN_SHARED (Stack opening a partner's document); consumed by AppRoot. */
     var pendingOpenShared by mutableStateOf<String?>(null)
+    /** True while MainActivity was opened only to sign in on behalf of another screen (see MainActivity.EXTRA_FINISH_AFTER_SIGN_IN). */
+    @Volatile var finishAfterSignIn = false
 
     /** Tells document-picker clients that a folder's contents changed. */
     fun docsChanged(folder: app.filenfiles.core.ItemId) {
