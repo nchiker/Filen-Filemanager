@@ -15,7 +15,6 @@
         <provider android:authorities="org.stackdocs.app.link" />
         <package android:name="org.stackdocs.app" />
         <package android:name="app.amipro.editor" />
-        <provider android:authorities="org.stackdocs.app.checks.linkcontract.link" /><!-- Stack checks build (test only; harmless otherwise) -->
     </queries>
 
     <application

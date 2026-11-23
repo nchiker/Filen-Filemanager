@@ -29,6 +29,13 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 - Test-only: `-PstackTestPackage=<pkg>` (BuildConfig, empty in shipped builds) points events at a Stack checks build and accepts it as a caller. Never set it for a release.
 - Test phone: installed a locally signed (release key, unpublished) build with that flag; Stack session seeds records (`filenSeed` / `filenShow` instrumentation).
 
+## 0.4.7 prep (2026-11-22, local only: not tagged, pushed, signed for release or published)
+- Version 0.4.7 (code 14), notes in `docs/RELEASE_NOTES_0.4.7.md`. Contents: Stack link slice 5 (locate/lookup, moved/removed/unshared), OPEN_SHARED, change notice,
+  pending-id read-back fix, pairing trio (`account`, GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER).
+- Waiting for: the owner's go-ahead; a two-account device test of the pairing trio and OPEN_SHARED/change notice (one account cannot receive a share); the higher-tier
+  security review of the pairing code; AmiPro's retest of save -> reopen -> locate. Build the release WITHOUT `-PstackTestPackage` (that flag is for Stack checks builds only).
+- Not done: folder events (a trashed/moved folder sends nothing for the files inside).
+
 ## Where things are
 - Repo: `~/Projects/Filen`, committed inside the enclosing `~/Projects` git repo (only `Filen/` is staged by us;
   sibling projects there are deliberately untracked). Commit with `git add Filen && git commit -- Filen`.

@@ -11,8 +11,8 @@ android {
         applicationId = "app.filenfiles"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.4.6"
+        versionCode = 14
+        versionName = "0.4.7"
         // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (certificate not pinned). Empty in shipped builds.
         buildConfigField("String", "STACK_TEST_PACKAGE", "\"${(project.findProperty("stackTestPackage") as String?) ?: ""}\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
