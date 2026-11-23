@@ -500,3 +500,11 @@ While updating their phone, the owner noticed that Filen Files' in-app update/in
 - Installed build: manifest carries the checks-package authority added in f6ade03 (`org.stackdocs.app.checks.linkcontract.link`), base.apk sha256 b2694737...; the Kotlin half of f6ade03 is not separately provable from the dex (R8), but the behaviour below matches the fix.
 - AmiPro seeded `nested-t2.sam` (UUID b86073f5-...) in `nested-trash-A/level-B/level-C`, live in Stack's checks build. Moving `nested-trash-A` to trash: ~10 s later `filenShow` = `state=trashed reason=trashed`. So a file two levels down gets its removed/trashed event.
 - Left in the owner's Trash (not emptied): `nested-trash-A` (with level-B, level-C, nested-trash-test.txt, nested-t2.sam). Deleting for good is waiting for the owner's OK (the .sam was created by AmiPro). My `/sdcard/Download/nested-trash-test.txt` on the phone is deleted.
+
+### Update flow verified on a throwaway emulator (2026-11-23)
+Android 13 (API 33) default x86_64 emulator (no Play Store, ~1.4 GB download, no x86_64 SDK build needed: the app ran with arm64 translation), not signed in. Test build = current main code signed with the release key as 0.4.6 / code 13 (version edit reverted, never committed); it was offered the real published v0.4.7.
+1. Permission NOT allowed: Update -> "Allow installing updates" dialog first, nothing downloaded; Not now -> stays on Update; Open settings -> Android's "Install unknown apps" page for Filen Files.
+2. Permission allowed (toggled there, Back): Update -> one tap -> download -> Android's "Do you want to update this app?" with no extra tap.
+3. Cancel then retry: Cancel -> the banner shows Install (file kept); Install -> the confirmation again.
+4. Nothing in Download: /sdcard/Download stayed empty throughout. Update tapped -> package ended at 0.4.7 / code 14.
+Emulator, image, SDK copy and the test APK were deleted afterwards. Not tested: a failed checksum/signature, a dropped download.
