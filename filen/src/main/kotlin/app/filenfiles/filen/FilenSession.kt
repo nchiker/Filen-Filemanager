@@ -10,6 +10,7 @@ import org.json.JSONObject
 import uniffi.filen_sdk_rs.JsClient
 import uniffi.filen_sdk_rs.JsClientConfig
 import uniffi.filen_sdk_rs.LoginParams
+import uniffi.filen_sdk_rs.RegisterParams
 import uniffi.filen_sdk_rs.LogLevel
 import uniffi.filen_sdk_rs.StringifiedClient
 import uniffi.filen_sdk_rs.UnauthJsClient
@@ -66,6 +67,11 @@ class FilenSession(private val context: Context) {
         _client = c
         _state.value = State.LoggedIn(s.email)
     }
+
+    /** Creates a Filen account; Filen then emails a confirmation link. Sign-in only works after it is followed. */
+    suspend fun register(email: String, password: String) { unauth().register(RegisterParams(email.trim(), password)) }
+
+    suspend fun resendConfirmation(email: String) { unauth().resendRegistrationConfirmation(email.trim()) }
 
     fun logout() {
         prefs.edit().remove("session").apply()

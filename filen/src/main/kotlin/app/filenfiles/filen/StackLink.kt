@@ -20,10 +20,13 @@ object StackLink {
     /** TEST ONLY: a Stack checks build's package, set from a Gradle property; empty (the default) in every shipped build. */
     @Volatile var testPackage: String = ""
 
-    /** package -> SHA-256 of its release signing certificate (lowercase hex). Public values, not keys. */
-    private val PINNED = mapOf(
-        STACK_PACKAGE to "e873f2fd869005e59828db6d4f8f31d1b05a37988818a7dd94adc1ae1b07e311",
-        "app.amipro.editor" to "9a387c70c8c19a3bb29e9b02f18840f4b1bb18ac291983d2d0ec1c684670868a",
+    /**
+     * package -> accepted SHA-256 values of its release signing certificate (lowercase hex; public values, not keys). A list
+     * so an app can rotate its signing key: add the new certificate here (keep the old one until the old key is retired).
+     */
+    private val PINNED: Map<String, Set<String>> = mapOf(
+        STACK_PACKAGE to setOf("e873f2fd869005e59828db6d4f8f31d1b05a37988818a7dd94adc1ae1b07e311"),
+        "app.amipro.editor" to setOf("9a387c70c8c19a3bb29e9b02f18840f4b1bb18ac291983d2d0ec1c684670868a"),
     )
 
     /** True when [uid] belongs to exactly one package and that package + its one signing certificate are pinned. */
@@ -35,7 +38,7 @@ object StackLink {
 
     private fun certMatches(context: Context, pkg: String): Boolean {
         val want = PINNED[pkg] ?: return false
-        return certificateOf(context, pkg) == want
+        return certificateOf(context, pkg) in want
     }
 
     @Suppress("DEPRECATION")

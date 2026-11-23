@@ -41,7 +41,9 @@ import app.filenfiles.core.ItemId
 import app.filenfiles.core.Origin
 import app.filenfiles.filen.FilenSession
 import kotlinx.coroutines.CancellationException
+import androidx.compose.ui.platform.LocalUriHandler
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -157,12 +159,15 @@ fun LoginScreen(env: AppEnv) {
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var creating by rememberSaveable { mutableStateOf(false) }
+    var waitingForEmail by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val state by env.app.session.state.collectAsState()
     LaunchedEffect(state) {
         if (state is FilenSession.State.LoggedIn) env.nav.navigate("home") { popUpTo("login") { inclusive = true } }
     }
     Column(Modifier.fillMaxSize().padding(24.dp).imePadding(), Arrangement.Center, Alignment.CenterHorizontally) {
+        if (creating || waitingForEmail) { CreateAccountPane(env, email, onEmail = { email = it }, onBack = { creating = false; waitingForEmail = false }, waiting = waitingForEmail, setWaiting = { waitingForEmail = it }); return@Column }
         Icon(Icons.Filled.Cloud, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         Text("Sign in to Filen", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 12.dp))
         if (state is FilenSession.State.Expired)
@@ -189,6 +194,7 @@ fun LoginScreen(env: AppEnv) {
             },
             enabled = !busy && email.isNotBlank() && pw.isNotEmpty(), modifier = Modifier.fillMaxWidth(),
         ) { if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Sign in") }
+        TextButton({ creating = true }) { Text("Create a Filen account") }
         TextButton({
             env.app.prefs.skipLogin()
             env.nav.navigate("home") { popUpTo("login") { inclusive = true } }
@@ -532,4 +538,79 @@ fun QuotaBar(env: AppEnv, signedIn: Boolean, padding: PaddingValues = PaddingVal
         Text("${fmt(q.used)} of ${fmt(q.max)} used on Filen", style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp))
     }
+}
+
+
+/**
+ * Create a Filen account inside the app (nobody has to visit filen.io): email + password, then a "check your email" wait that
+ * tries to sign in every few seconds and carries on by itself once the confirmation link has been followed. The password is
+ * kept only in memory for that wait and never logged or saved.
+ */
+@Composable
+private fun CreateAccountPane(env: AppEnv, email: String, onEmail: (String) -> Unit, onBack: () -> Unit, waiting: Boolean, setWaiting: (Boolean) -> Unit) {
+    var pw by remember { mutableStateOf("") }
+    var pw2 by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var tries by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val uri = LocalUriHandler.current
+
+    // After the password is gone (rotation, process death) the wait cannot sign in by itself: ask for it again.
+    suspend fun tryLogin(): Boolean {
+        if (pw.isEmpty()) return false
+        return try { env.app.session.login(email, pw, null); true } catch (e: CancellationException) { throw e } catch (_: Throwable) { false }
+    }
+    if (waiting) {
+        LaunchedEffect(Unit) { while (true) { delay(8_000); if (tryLogin()) break; tries++ } }
+        Text("Check your email", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 12.dp))
+        Text("Filen sent a confirmation link to $email. Open it on this phone or any device; this screen carries on by itself once it is confirmed.")
+        if (pw.isEmpty()) {
+            Text("The password is needed to continue after you confirm:", modifier = Modifier.padding(top = 12.dp))
+            OutlinedTextField(pw, { pw = it }, label = { Text("Password") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+        } else LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 16.dp))
+        note?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            Button(enabled = !busy && pw.isNotEmpty(), onClick = {
+                busy = true; note = null
+                scope.launch { if (!tryLogin()) note = "Not confirmed yet. Open the link in the email first."; busy = false }
+            }) { Text("I've confirmed") }
+            OutlinedButton(enabled = !busy, onClick = {
+                busy = true; note = null
+                scope.launch {
+                    note = try { env.app.session.resendConfirmation(email); "Sent again." } catch (e: CancellationException) { throw e } catch (e: Throwable) { e.friendly() }
+                    busy = false
+                }
+            }) { Text("Send again") }
+        }
+        TextButton(onBack) { Text("Cancel") }
+        return
+    }
+    Text("Create a Filen account", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 12.dp))
+    OutlinedTextField(email, onEmail, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(pw, { pw = it }, label = { Text("Password (at least 10 characters)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(pw2, { pw2 = it }, label = { Text("Repeat password") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+    Text("Filen encrypts your files with this password. It cannot be reset: if you forget it, your files cannot be recovered. Write it down somewhere safe.",
+        style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+    TextButton({ uri.openUri("https://filen.io/terms") }) { Text("Filen's terms apply (filen.io/terms)") }
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    Spacer(Modifier.height(8.dp))
+    Button(enabled = !busy && email.contains('@') && pw.length >= 10 && pw == pw2, modifier = Modifier.fillMaxWidth(), onClick = {
+        busy = true; error = null
+        scope.launch {
+            try { env.app.session.register(email, pw); setWaiting(true) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Throwable) { error = e.friendly() }
+            busy = false
+        }
+    }) { if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Create account") }
+    if (pw.isNotEmpty() && pw2.isNotEmpty() && pw != pw2) Text("The passwords do not match.", color = MaterialTheme.colorScheme.error)
+    TextButton(onBack) { Text("I already have an account") }
 }
