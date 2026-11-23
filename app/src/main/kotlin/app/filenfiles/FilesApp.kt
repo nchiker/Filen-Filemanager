@@ -129,6 +129,7 @@ class FilesApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        app.filenfiles.filen.StackLink.testPackage = BuildConfig.STACK_TEST_PACKAGE
         session = FilenSession(this)
         local = LocalStorageProvider(this)
         filen = FilenStorageProvider(this, session)

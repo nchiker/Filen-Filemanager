@@ -13,9 +13,11 @@ android {
         targetSdk = 36
         versionCode = 13
         versionName = "0.4.6"
+        // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (certificate not pinned). Empty in shipped builds.
+        buildConfigField("String", "STACK_TEST_PACKAGE", "\"${(project.findProperty("stackTestPackage") as String?) ?: ""}\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging { jniLibs { useLegacyPackaging = false } }
     // Release signing key lives OUTSIDE the repo (never commit it). Override the location with FILEN_KEYSTORE_PROPS.

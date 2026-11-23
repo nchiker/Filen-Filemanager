@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Stack's link provider (org.stackdocs.app.link) must be visible to receive Filen-origin events. -->
+    <queries>
+        <provider android:authorities="org.stackdocs.app.link" />
+        <package android:name="org.stackdocs.app" />
+        <package android:name="app.amipro.editor" />
+        <provider android:authorities="org.stackdocs.app.checks.linkcontract.link" /><!-- Stack checks build (test only; harmless otherwise) -->
+    </queries>
+
     <application
         android:name=".FilesApp"
         android:allowBackup="false"
@@ -56,6 +64,11 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+        <!-- Stack link (locate / lookup). Exported, but call() refuses everyone except the pinned package + certificate pairs. -->
+        <provider
+            android:name=".stacklink.StackLinkProvider"
+            android:authorities="app.filenfiles.stacklink"
+            android:exported="true" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

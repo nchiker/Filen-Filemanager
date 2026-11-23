@@ -428,6 +428,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         require(canLink(item)) { "This item cannot have a public link" }
         if (item.isDirectory) client.removeDirLink(dirObj(item.id))
         else { val f = fileObj(item.id); client.getFileLinkStatus(f)?.let { client.removeFileLink(f, it) } }
+        if (!item.isDirectory) stackEvent { if (!stillShared(item.id.key)) StackLink.unshared(context, item.id.key) }
     }
 
     override suspend fun links(): List<LinkedItem> = io {
@@ -442,6 +443,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val roots = outRoots[item.id.value] ?: error("This share is no longer listed; reload and try again")
         roots.forEach { client.removeSharedItem(it) }
         outRoots.remove(item.id.value); sharedDirs.remove(item.id.value); sharedFiles.remove(item.id.value)
+        if (roots.any { it is SharedRootItem.File }) stackEvent { if (!stillShared(item.id.key)) StackLink.unshared(context, item.id.key) }
     }
 
     // ---------- stat / favorites / recents ----------
@@ -703,6 +705,59 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     /** Something changed that the in-place edits can't express (a restored folder brings its subtree back). */
     private fun indexMarkDirty() { synchronized(indexLock) { personalDirty = true; mutations++ } }
 
+    // ---------- Stack link (docs/STACK_LINK_CONTRACT.md): events out, lookups in ----------
+
+    private val stackScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    /** Runs [block] off the caller's path; any failure is swallowed so a file operation never depends on Stack. */
+    private fun stackEvent(block: suspend () -> Unit) { stackScope.launch { runCatching { block() } } }
+
+    private fun stackNames(item: FileItem) = !item.isDirectory && item.id.scheme == P && item.id.key != ROOT
+
+    /** "/Folder/Sub/name" of a personal file after an operation (null if unknown). Folders are never named to Stack. */
+    private suspend fun filePath(uuid: String): String? {
+        val f = personalFiles[uuid] ?: return null
+        val parent = (f.parent as? ParentUuid.Uuid)?.v1 ?: return null
+        val crumbs = personalTrail(parent, rootUuid)
+        return "/" + (crumbs.drop(1).map { it.name } + fileInfo(f.meta, f.uuid).name).joinToString("/")
+    }
+
+    private fun notifyMoved(item: FileItem) {
+        if (!stackNames(item)) return
+        stackEvent { filePath(item.id.key)?.let { StackLink.moved(context, item.id.key, it) } }
+    }
+
+    private fun notifyRemoved(item: FileItem, reason: String) {
+        if (item.id.scheme == P && !item.isDirectory) stackEvent { StackLink.removed(context, item.id.key, reason) }
+    }
+
+    /** Whether others can still reach a personal item: a public link, or an outgoing share to a contact. */
+    private suspend fun stillShared(uuid: String): Boolean {
+        client.getFileOptional(uuid)?.let { f ->
+            if (client.getFileLinkStatus(f) != null) return true
+        }
+        val out = client.listOutShared(null)
+        return out.files.any { it.uuid == uuid } || out.dirs.any { it.inner.uuid == uuid }
+    }
+
+    /** What Stack's `lookup(uuid)` answers. [path] is null for a trashed or missing item. */
+    class StackLookup(val exists: Boolean, val path: String?, val trashed: Boolean, val shared: Boolean)
+
+    suspend fun stackLookup(uuid: String): StackLookup = io {
+        val f = client.getFileOptional(uuid)
+        if (f == null) return@io StackLookup(false, null, false, false)
+        personalFileItem(f)
+        if (f.parent is ParentUuid.Trash) return@io StackLookup(true, null, true, false)
+        StackLookup(true, filePath(uuid), false, runCatching { stillShared(uuid) }.getOrDefault(false))
+    }
+
+    /** `locate(uri)`: the uuid and path of a Filen document id (`filen:<uuid>` or `filen-in:<uuid>`). */
+    suspend fun stackPath(id: ItemId): String? = io {
+        if (id.scheme != P) return@io null
+        client.getFileOptional(id.key)?.let { personalFileItem(it) }
+        filePath(id.key)
+    }
+
     // ---------- write (personal drive only: received shares are never written to) ----------
 
     override fun canWrite(folder: ItemId) = folder.scheme == P
@@ -743,7 +798,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             personalDirItem(client.updateDirMetadata(dirObj(item.id), DirectoryMetaChanges(name = newName, created = CreatedTime.Keep)))
         else
             personalFileItem(client.updateFileMetadata(fileObj(item.id), FileMetaChanges(name = newName, created = CreatedTime.Keep)))
-        indexUpsert(out, null); out
+        indexUpsert(out, null); notifyMoved(out); out
     }
 
     override suspend fun move(item: FileItem, newParent: ItemId): FileItem = io {
@@ -751,7 +806,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val parent = personalDir(newParent)
         val out = if (item.isDirectory) personalDirItem(client.moveDir(dirObj(item.id), parent))
         else personalFileItem(client.moveFile(fileObj(item.id), parent))
-        indexUpsert(out, newParent.normalizedParent()); out
+        indexUpsert(out, newParent.normalizedParent()); notifyMoved(out); out
     }
 
     override suspend fun trash(item: FileItem): (suspend () -> Unit)? = io {
@@ -761,9 +816,10 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             ({ io { indexUpsert(personalDirItem(client.restoreDir(t)), null); indexMarkDirty() } })
         } else {
             val t = client.trashFile(fileObj(item.id))
-            ({ io { val f = client.restoreFile(t); indexUpsert(personalFileItem(f), personalParentId(f.parent)) } })
+            ({ io { val f = client.restoreFile(t); val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi) } })
         }
         indexRemoveSubtree(item.id)
+        notifyRemoved(item, "trashed")
         undo
     }
 
@@ -791,7 +847,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             indexUpsert(personalDirItem(d), personalParentId(d.parent)); indexMarkDirty() // its subtree comes back too
         } else {
             val f = client.restoreFile(trashedFiles[item.id.key] ?: error("Trash changed; reload it"))
-            indexUpsert(personalFileItem(f), personalParentId(f.parent))
+            val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi)
         }
         trashedDirs.remove(item.id.key); trashedFiles.remove(item.id.key)
     }
@@ -800,10 +856,13 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         if (item.isDirectory) client.deleteDirPermanently(trashedDirs[item.id.key] ?: error("Trash changed; reload it"))
         else client.deleteFilePermanently(trashedFiles[item.id.key] ?: error("Trash changed; reload it"))
         trashedDirs.remove(item.id.key); trashedFiles.remove(item.id.key)
+        notifyRemoved(item, "deleted")
     }
 
     override suspend fun emptyTrash(): Unit = io {
+        val gone = trashedFiles.keys.toList() // as of the last trash listing; anything else is caught by Stack's next stat
         client.emptyTrash(); trashedDirs.clear(); trashedFiles.clear()
+        stackEvent { gone.forEach { StackLink.removed(context, it, "deleted") } }
     }
 
     // ---------- download ----------
