@@ -32,9 +32,9 @@ class TransferService : Service() {
                 val active = list.filter { it.active }
                 // Until the session is known a restarted service has nothing to show but must not give up yet.
                 if (active.isEmpty()) { if (settled) stopSelf(); return@collect }
-                val cur = active.firstOrNull { it.state == TransferManager.State.UPLOADING } ?: active.first()
+                val cur = active.firstOrNull { it.state == TransferState.UPLOADING } ?: active.first()
                 val text = when (cur.state) {
-                    TransferManager.State.WAITING_NETWORK -> "Waiting for network… ${cur.name}"
+                    TransferState.WAITING_NETWORK -> "Waiting for network… ${cur.name}"
                     else -> "${cur.verb} ${cur.name}" + if (active.size > 1) " (+${active.size - 1} more)" else ""
                 }
                 nm.notify(ID, build(text, cur.done, cur.size))

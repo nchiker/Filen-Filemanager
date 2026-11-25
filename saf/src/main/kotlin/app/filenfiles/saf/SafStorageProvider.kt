@@ -146,10 +146,10 @@ class SafStorageProvider(
         val tree = treeOf(folder); val docId = docIdOf(folder)
         val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         var items: List<FileItem> = emptyList()
+        var loading = false
         // Providers may answer with "still loading"; give them a few seconds to fill the listing.
         for (attempt in 0..10) {
             val cursor = resolver.query(uri, PROJECTION, null, null, null) ?: throw IOException("The storage app didn't respond. Is it installed and signed in?")
-            var loading = false
             items = cursor.use { c ->
                 loading = c.extras?.getBoolean(DocumentsContract.EXTRA_LOADING, false) == true
                 buildList { while (c.moveToNext()) add(toItem(tree, c)) }
@@ -160,7 +160,7 @@ class SafStorageProvider(
         items.forEach { parents[it.id.value] = folder.value }
         val self = if (isRoot(folder)) null else names[folder.value] ?: queryOne(tree, docId)?.name
         val title = if (isRoot(folder)) names[folder.value] ?: roots.firstOrNull { it.tree == tree }?.name ?: "Cloud storage" else self ?: "Folder"
-        Listing(Folder(folder, title, Origin.EXTERNAL), items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })), trail(folder, title))
+        Listing(Folder(folder, title, Origin.EXTERNAL), items.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })), trail(folder, title), partial = loading)
     }
 
     private fun trail(folder: ItemId, title: String): List<Crumb> {

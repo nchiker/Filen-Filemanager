@@ -32,6 +32,8 @@ data class FileItem(
     /** For items inside a shared tree: who shared it (email), when known. */
     val sharedBy: String? = null,
     val sharedWith: String? = null,
+    /** Filen personal files: the whole-life id that stays the same across saved versions (the SDK's stableUuid). */
+    val lineage: String? = null,
 )
 
 /** One entry of a breadcrumb trail. */
@@ -41,7 +43,8 @@ data class Crumb(val id: ItemId, val name: String)
 data class Folder(val id: ItemId, val name: String, val origin: Origin)
 
 /** A directory listing together with the trail that leads to it. */
-data class Listing(val folder: Folder, val items: List<FileItem>, val trail: List<Crumb>)
+/** [partial]: the storage said it was still loading, so [items] may miss some (another app's cloud storage). */
+data class Listing(val folder: Folder, val items: List<FileItem>, val trail: List<Crumb>, val partial: Boolean = false)
 
 /** A file made available to a viewer or to Open-With: always a local path/Uri. */
 data class MaterializedFile(val path: String, val name: String, val mime: String?)
@@ -67,6 +70,9 @@ interface StorageProvider {
 
     /** Resolve one item (used by favorites). */
     suspend fun stat(id: ItemId): FileItem?
+
+    /** [stat] asked of the storage itself, never of a cache; null also when [id] is no longer the current item. */
+    suspend fun freshStat(id: ItemId): FileItem? = stat(id)
 
     /** Make the file readable locally (downloading+decrypting into cache if needed). */
     suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit = { _, _ -> }): MaterializedFile
@@ -98,6 +104,9 @@ interface WritableStorage {
     suspend fun createFolder(parent: ItemId, name: String): ItemId
     suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit = {}): FileItem
 
+    /** Why this storage would refuse [name] for a new file or folder, in words for the user; null when it is fine. */
+    fun nameProblem(name: String): String? = null
+
     /** True when [item] may be renamed, moved or deleted (never true for received shares). */
     fun canModify(item: FileItem): Boolean
     suspend fun rename(item: FileItem, newName: String): FileItem
@@ -108,6 +117,12 @@ interface WritableStorage {
      * or null when it is permanent (local storage).
      */
     suspend fun trash(item: FileItem): (suspend () -> Unit)?
+
+    /**
+     * Removes [folder] only if it is empty, in one step that cannot take new content with it. False when it isn't empty;
+     * null when this storage has no such step.
+     */
+    suspend fun removeEmptyFolder(folder: FileItem): Boolean? = null
 }
 
 /** Implemented by providers with a recoverable trash (Filen). Items are top-level trashed entries. */
@@ -209,6 +224,7 @@ class StorageRouter(private val providers: List<StorageProvider>) {
     fun parentOf(item: ItemId): ItemId? =
         if (item.scheme == "local") java.io.File(item.key).parent?.let { ItemId("local:$it") } else zipParents[item.value]
     suspend fun stat(id: ItemId): FileItem? = provider(id).stat(id)
+    suspend fun freshStat(id: ItemId): FileItem? = provider(id).freshStat(id)
     suspend fun serverFavorites(): List<FileItem> =
         providers.flatMap { runCatching { it.favorites() }.getOrDefault(emptyList()) }
     suspend fun materialize(item: FileItem, onProgress: (Long, Long) -> Unit = { _, _ -> }) =

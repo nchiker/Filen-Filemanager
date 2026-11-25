@@ -8,17 +8,30 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.filenfiles.transfer.TransferManager.State
+import app.filenfiles.transfer.TransferState as State
 
 /** Upload progress / failures, shown above the bottom bar on every screen. */
 @Composable
 fun TransfersPanel(env: AppEnv, padForNavBar: Boolean) {
     val m = env.app.transfers
     val all by m.items.collectAsState()
+    var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    confirm?.let { (text, action) ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Discard unsent files?") },
+            text = { Text(text) },
+            confirmButton = { TextButton({ confirm = null; action() }) { Text("Discard") } },
+            dismissButton = { TextButton({ confirm = null }) { Text("Keep") } },
+        )
+    }
     if (all.isEmpty()) return
     val active = all.filter { it.active }
     val failed = all.filter { it.state == State.FAILED }
@@ -40,7 +53,11 @@ fun TransfersPanel(env: AppEnv, padForNavBar: Boolean) {
                         )
                         Text(cur.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton({ m.cancelAll() }) { Text("Cancel") }
+                    TextButton({
+                        // A file another app saved through Filen may exist nowhere else.
+                        if (active.any { it.docId != null }) confirm = "A file another app saved has not been uploaded yet. Cancelling deletes this copy of it." to { m.cancelAll() }
+                        else m.cancelAll()
+                    }) { Text("Cancel") }
                 }
                 if (cur.state == State.UPLOADING && cur.size > 0)
                     LinearProgressIndicator(progress = { (cur.done.toFloat() / cur.size).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
@@ -51,6 +68,16 @@ fun TransfersPanel(env: AppEnv, padForNavBar: Boolean) {
                     IconButton({ m.clearFinished() }) { Icon(Icons.Filled.Close, "Dismiss") }
                 }
             }
+            // Finished, with something the user should know (a save kept as a conflict copy, a cancel that came too late).
+            all.filter { it.state == State.DONE && it.error != null }.forEach { t ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(t.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(t.error!!, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                    }
+                    IconButton({ m.dismiss(t.id) }) { Icon(Icons.Filled.Close, "Dismiss") }
+                }
+            }
             failed.forEach { t ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -58,7 +85,10 @@ fun TransfersPanel(env: AppEnv, padForNavBar: Boolean) {
                         Text(t.error ?: "Upload failed", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
                     }
                     IconButton({ m.retry(t.id) }) { Icon(Icons.Filled.Refresh, "Retry") }
-                    IconButton({ m.dismiss(t.id) }) { Icon(Icons.Filled.Close, "Dismiss") }
+                    IconButton({
+                        if (t.docId != null) confirm = "“${t.name}” was saved by another app and has not been uploaded. Dismissing deletes this copy of it." to { m.dismiss(t.id) }
+                        else m.dismiss(t.id)
+                    }) { Icon(Icons.Filled.Close, "Dismiss") }
                 }
             }
         }

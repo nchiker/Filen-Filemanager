@@ -9,9 +9,12 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import app.filenfiles.FilesApp
+import app.filenfiles.core.CopyLedger
 import app.filenfiles.core.ItemId
+import app.filenfiles.filen.FilenSession
 import app.filenfiles.core.Names
 import app.filenfiles.core.RecentUploads
+import app.filenfiles.core.SaveOver
 import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.LocalCache
 import app.filenfiles.filen.failureKind
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.StateFlow
@@ -40,87 +44,53 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * App-scoped upload queue. Unlike a screen-scoped coroutine it survives navigation, reports progress for the
- * whole app, can be cancelled, waits for connectivity after a network failure and never leaves duplicates
- * behind when a retry follows an upload that actually reached the server. A foreground service keeps the
+ * whole app, can be cancelled and waits for connectivity after a network failure. A retry after an upload that did
+ * reach the server may leave a numbered duplicate; it never replaces a file. A foreground service keeps the
  * process alive while work is pending.
  */
 @OptIn(FlowPreview::class)
 class TransferManager(private val app: FilesApp) {
-    enum class State { QUEUED, PREPARING, UPLOADING, WAITING_NETWORK, DONE, FAILED, CANCELLED }
-
-    /** UPLOAD sends a picked document/staged file to [Transfer.parent]; COPY copies/moves [Transfer.source] (file or folder) there. */
-    enum class Kind { UPLOAD, COPY, ZIP, UNZIP,
-        /** ADDZIP: [Transfer.source] is the zip, [Transfer.sources] the staged local files to add, [Transfer.prefix] the folder inside it. */
-        ADDZIP }
-
-    data class Transfer(
-        val id: Long, val name: String, val uri: Uri, val parent: ItemId, val mime: String?,
-        val size: Long, val state: State = State.QUEUED, val done: Long = 0, val error: String? = null, val attempt: Int = 1,
-        /** Already-staged source (documents-provider writes): uploaded in place and deleted when finished/cancelled/dismissed. */
-        val file: File? = null,
-        /** Epoch millis the current/last attempt began (0 = never ran); lets a restart detect an upload that landed before the kill. */
-        val startedAt: Long = 0,
-        /** True once the picked Uri has been fully copied to the staging dir (so a restart doesn't need the Uri any more). */
-        val staged: Boolean = false,
-        val kind: Kind = Kind.UPLOAD,
-        /** COPY only: what to copy, and whether to delete it once everything has been copied. */
-        val source: ItemId? = null,
-        val move: Boolean = false,
-        /** ZIP only: the items to compress ([name] is the archive's file name). UNZIP uses [source] for the archive. */
-        val sources: List<ItemId> = emptyList(),
-        /** Documents-provider writes: the `filen-pending:N` id the other app was given, kept so its row survives a restart. */
-        val docId: String? = null,
-        /** ADDZIP only: the folder inside the archive the files go to ("" or "a/b/"). */
-        val prefix: String = "",
-    ) {
-        /** Present-tense label for the panel/notification. */
-        val verb: String get() = when {
-            kind == Kind.UPLOAD -> "Uploading"
-            kind == Kind.ZIP -> "Compressing"
-            kind == Kind.UNZIP -> "Extracting"
-            kind == Kind.ADDZIP -> "Updating zip"
-            move -> "Moving"
-            source != null && source.scheme != "local" && parent.scheme == "local" -> "Saving"
-            else -> "Copying"
-        }
-        val active get() = state == State.QUEUED || state == State.PREPARING || state == State.UPLOADING || state == State.WAITING_NETWORK
-    }
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val ids = AtomicLong(1)
     private val queue = Channel<Long>(Channel.UNLIMITED)
     private val jobs = HashMap<Long, Job>()
-    private val _items = MutableStateFlow<List<Transfer>>(emptyList())
-    val items: StateFlow<List<Transfer>> = _items
+    private val store = TransferStore(
+        app.filesDir, LocalCache.outbox(app.applicationContext), LocalCache.dir(app.applicationContext, LocalCache.UPLOAD),
+        account = { (app.session.state.value as? FilenSession.State.LoggedIn)?.email },
+    )
+    val items: StateFlow<List<Transfer>> = store.items
 
     /** False until [resume]/[clearAll] ran after the session state is known: the service must not stop before that. */
     private val _settled = MutableStateFlow(false)
     val settled: StateFlow<Boolean> = _settled
     private val scheduled = HashSet<Long>() // ids already handed to the worker queue
-    private val storeFile = File(app.filesDir, "transfers.json")
 
     init {
-        loadPersisted()
-        sweepOrphanStaging()
+        store.open()
+        // Archive scratch space is rebuilt from scratch by a resumed job, so whatever is there is leftover.
+        listOf("archive", "extract").forEach { LocalCache.dir(app.applicationContext, it).deleteRecursively() }
         // Persist when the *shape* of the list changes (not on every progress tick).
         scope.launch {
-            _items.map { l -> l.filter { it.active || it.state == State.FAILED }.map { "${it.id}|${it.state}|${it.attempt}|${it.size}|${it.error}|${it.startedAt}|${it.staged}|${it.kind}" } }
-                .distinctUntilChanged().debounce(300).collect { savePersisted() }
+            store.items.map { l -> l.filter { it.active || it.state == TransferState.FAILED }.map { "${it.id}|${it.state}|${it.attempt}|${it.size}|${it.error}|${it.startedAt}|${it.staged}|${it.kind}|${it.file}|${it.sources}" } }
+                .distinctUntilChanged().debounce(300).collect { store.save() }
         }
         scope.launch {
             for (id in queue) {
-                val t = find(id) ?: continue
-                if (t.state != State.QUEUED) continue // cancelled while waiting
+                val t = store.find(id) ?: continue
+                if (t.state != TransferState.QUEUED) continue // cancelled while waiting
                 val job = scope.launch { process(id) }
                 synchronized(jobs) { jobs[id] = job }
                 job.join()
                 synchronized(jobs) { jobs.remove(id) }
+                store.afterJob(t) // finished, cancelled or dismissed: its content goes; failed or held: it stays for Retry
             }
         }
     }
 
-    private fun find(id: Long) = _items.value.firstOrNull { it.id == id }
-    private fun update(id: Long, f: (Transfer) -> Transfer) = _items.update { l -> l.map { if (it.id == id) f(it) else it } }
+    private fun running(id: Long) = synchronized(jobs) { jobs[id]?.isActive == true }
+    private fun find(id: Long) = store.find(id)
+    private fun update(id: Long, f: (Transfer) -> Transfer) = store.update(id, f)
+    private fun step(id: Long, f: (Transfer) -> Transfer) = store.step(id, f)
+    private fun fail(id: Long, msg: String) = store.fail(id, msg)
 
     /** Queues the picked documents for upload into [parent]. */
     fun enqueueUploads(parent: ItemId, uris: List<Uri>) {
@@ -134,9 +104,9 @@ class TransferManager(private val app: FilesApp) {
             }
             // Lets the Uri stay readable after a process restart (not every provider offers it; staging covers the rest).
             runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            Transfer(ids.getAndIncrement(), name, uri, parent, ctx.contentResolver.getType(uri), size)
+            Transfer(store.nextId(), name, uri.toString(), parent, ctx.contentResolver.getType(uri), size)
         }
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + added } // new batch: forget completed/cancelled ones
+        store.add(added)
         startService()
         added.forEach { schedule(it.id) }
     }
@@ -145,9 +115,9 @@ class TransferManager(private val app: FilesApp) {
 
     /** Queues a copy (or move, which deletes the original after a complete copy) of [source] into the folder [dest]. */
     fun enqueueCopy(source: app.filenfiles.core.FileItem, dest: ItemId, move: Boolean): Long {
-        val t = Transfer(ids.getAndIncrement(), source.name, Uri.EMPTY, dest, source.mime, source.size,
-            kind = Kind.COPY, source = source.id, move = move)
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        val t = Transfer(store.nextId(), source.name, "", dest, source.mime, source.size,
+            kind = TransferKind.COPY, source = source.id, move = move)
+        store.add(listOf(t))
         startService()
         schedule(t.id)
         return t.id
@@ -155,16 +125,16 @@ class TransferManager(private val app: FilesApp) {
 
     /** Queues compressing [items] into a new .zip inside the folder [dest]. */
     fun enqueueZip(items: List<app.filenfiles.core.FileItem>, dest: ItemId): Long {
-        val t = Transfer(ids.getAndIncrement(), ArchiveRunner.archiveName(items), Uri.EMPTY, dest, "application/zip", -1,
-            kind = Kind.ZIP, sources = items.map { it.id })
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        val t = Transfer(store.nextId(), ArchiveRunner.archiveName(items), "", dest, "application/zip", -1,
+            kind = TransferKind.ZIP, sources = items.map { it.id })
+        store.add(listOf(t))
         startService(); schedule(t.id); return t.id
     }
 
     /** Queues extracting the .zip [archive] into a new folder inside [dest]. */
     fun enqueueUnzip(archive: app.filenfiles.core.FileItem, dest: ItemId): Long {
-        val t = Transfer(ids.getAndIncrement(), archive.name, Uri.EMPTY, dest, archive.mime, archive.size, kind = Kind.UNZIP, source = archive.id)
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        val t = Transfer(store.nextId(), archive.name, "", dest, archive.mime, archive.size, kind = TransferKind.UNZIP, source = archive.id)
+        store.add(listOf(t))
         startService(); schedule(t.id); return t.id
     }
 
@@ -174,14 +144,14 @@ class TransferManager(private val app: FilesApp) {
      */
     fun enqueueAddToZip(zip: app.filenfiles.core.FileItem, uris: List<Uri>, prefix: String) {
         val ctx = app.applicationContext
-        val id = ids.getAndIncrement()
+        val id = store.nextId()
         val parent = app.router.parentOf(zip.id) ?: ItemId("none:")
-        val t = Transfer(id, zip.name, Uri.EMPTY, parent, "application/zip", -1, state = State.PREPARING,
-            kind = Kind.ADDZIP, source = zip.id, prefix = prefix)
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        val t = Transfer(id, zip.name, "", parent, "application/zip", -1, state = TransferState.PREPARING,
+            kind = TransferKind.ADDZIP, source = zip.id, prefix = prefix)
+        store.add(listOf(t))
         startService()
         scope.launch {
-            val dir = File(LocalCache.dir(ctx, LocalCache.UPLOAD), "$id").apply { mkdirs() }
+            val dir = store.stagingDir(id).apply { mkdirs() }
             try {
                 val staged = ArrayList<ItemId>()
                 val used = ArrayList<String>()
@@ -194,7 +164,7 @@ class TransferManager(private val app: FilesApp) {
                     input.use { i -> f.outputStream().use { o -> i.copyTo(o) } }
                     staged += ItemId("local:${f.absolutePath}")
                 }
-                update(id) { if (it.state == State.PREPARING) it.copy(state = State.QUEUED, sources = staged) else it }
+                update(id) { if (it.state == TransferState.PREPARING) it.copy(state = TransferState.QUEUED, sources = staged) else it }
                 schedule(id)
             } catch (e: CancellationException) { throw e
             } catch (e: Throwable) {
@@ -206,140 +176,116 @@ class TransferManager(private val app: FilesApp) {
 
     /** Queues adding existing [items] (files on any storage) to the zip [zip], at its top level. */
     fun enqueueAddItemsToZip(zip: app.filenfiles.core.FileItem, items: List<app.filenfiles.core.FileItem>) {
-        val t = Transfer(ids.getAndIncrement(), zip.name, Uri.EMPTY, app.router.parentOf(zip.id) ?: ItemId("none:"), "application/zip", -1,
-            kind = Kind.ADDZIP, source = zip.id, sources = items.map { it.id })
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+        val t = Transfer(store.nextId(), zip.name, "", app.router.parentOf(zip.id) ?: ItemId("none:"), "application/zip", -1,
+            kind = TransferKind.ADDZIP, source = zip.id, sources = items.map { it.id })
+        store.add(listOf(t))
         startService(); schedule(t.id)
     }
 
     /** Queues an already-local file (written by another app through the documents provider). Takes ownership of [file]. */
-    fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?, docId: String? = null): Long {
-        val t = Transfer(ids.getAndIncrement(), name, Uri.fromFile(file), parent, mime, file.length(), file = file, docId = docId)
-        _items.update { l -> l.filter { it.active || it.state == State.FAILED } + t }
+    fun enqueueFile(parent: ItemId, file: File, name: String, mime: String?, docId: String? = null, writer: Int = -1): Long {
+        val t = Transfer(store.nextId(), name, Uri.fromFile(file).toString(), parent, mime, file.length(), file = file, docId = docId, writer = writer)
+        store.add(listOf(t))
+        store.save() // now, not after the debounce: the writer has been told its save worked
         startService()
         schedule(t.id)
         return t.id
     }
 
+    /**
+     * Queues new content another app saved over the existing Filen file [lineage] (edited from version [base]). Takes
+     * ownership of [file]. Saves of one file run in the order they were made (the queue runs one job at a time).
+     */
+    fun enqueueSave(parent: ItemId, file: File, name: String, mime: String?, lineage: String, base: String?, writer: Int): Long {
+        val t = Transfer(store.nextId(), name, Uri.fromFile(file).toString(), parent, mime, file.length(), file = file,
+            kind = TransferKind.SAVE, lineage = lineage, base = base, writer = writer)
+        store.add(listOf(t))
+        store.save() // now: the writer has been told its save worked
+        startService()
+        schedule(t.id)
+        return t.id
+    }
+
+    /** The newest unsent save of the file [lineage], if any: readers get its content until it is uploaded. */
+    fun pendingSave(lineage: String): Transfer? = store.pendingSave(lineage)
+
     /** Uploads that finished in the last couple of minutes (the Filen listing can lag behind them). */
     val recentUploads = RecentUploads()
 
     /** Whether anything is queued, running, or waiting for the network. */
-    val hasActive: Boolean get() = _items.value.any { it.active }
+    val hasActive: Boolean get() = store.items.value.any { it.active }
 
     /** Documents-provider writes that are queued, running, waiting or failed (not yet dismissed), oldest first. */
-    fun providerUploads(): List<Transfer> = _items.value.filter { it.kind == Kind.UPLOAD && it.docId != null && (it.active || it.state == State.FAILED) }
+    fun providerUploads(): List<Transfer> = store.providerUploads()
 
     /** pending document id -> real id, for files other apps wrote through the documents provider and that finished uploading. */
     val docIds = DocIdMap(File(app.filesDir, "docids.json"))
 
-    fun byDocId(docId: String): Transfer? = _items.value.firstOrNull { it.docId == docId }
+    fun byDocId(docId: String): Transfer? = store.byDocId(docId)
 
     /** True while the transfer is still pending (queued, running, waiting or failed-but-retryable). */
-    fun isPending(id: Long) = find(id)?.let { it.state != State.DONE && it.state != State.CANCELLED } == true
+    fun isPending(id: Long) = find(id)?.let { it.state != TransferState.DONE && it.state != TransferState.CANCELLED } == true
 
-    private fun discardSource(t: Transfer?) {
-        t?.file?.parentFile?.deleteRecursively()
-        if (t?.kind == Kind.ADDZIP) File(LocalCache.dir(app.applicationContext, LocalCache.UPLOAD), "${t.id}").deleteRecursively()
-    }
+    fun describeWrite(dir: File, docId: String, parent: ItemId, name: String, mime: String, lineage: String? = null, base: String? = null, writer: Int = -1) =
+        store.describeWrite(dir, docId, parent, name, mime, lineage, base, writer)
 
+    fun noteRead(uid: Int, lineage: String, version: String) = store.noteRead(uid, lineage, version)
+
+    fun baseFor(uid: Int, lineage: String, copied: String?, copiedFrom: Transfer?): String? = store.baseFor(uid, lineage, copied, copiedFrom)
+
+    /** Stops [id]. What it owns is deleted once its job has stopped; an upload already being named still finishes and says so. */
     fun cancel(id: Long) {
-        val t = find(id) ?: return
-        if (!t.active) return
-        update(id) { it.copy(state = State.CANCELLED, error = null) }
-        synchronized(jobs) { jobs[id] }?.cancel()
-        discardSource(t)
+        val job = synchronized(jobs) { jobs[id] }
+        store.cancel(id, running = job?.isActive == true) ?: return
+        job?.cancel()
     }
 
-    fun cancelAll() = _items.value.filter { it.active }.forEach { cancel(it.id) }
+    fun cancelAll() = store.items.value.filter { it.active }.forEach { cancel(it.id) }
 
     fun retry(id: Long) {
-        val t = find(id) ?: return
-        if (t.active || t.state == State.DONE) return
-        // A retried copy resumes (skips what already arrived); a retried upload starts over.
-        update(id) { it.copy(state = State.QUEUED, done = 0, error = null, attempt = 1, startedAt = if (it.kind == Kind.COPY) it.startedAt else 0) }
+        if (!store.retry(id)) return
         startService()
         schedule(id)
     }
 
-    fun dismiss(id: Long) {
-        find(id)?.takeIf { !it.active }?.let(::discardSource)
-        _items.update { l -> l.filterNot { it.id == id && !it.active } }
-    }
-    fun clearFinished() = _items.update { l -> l.filter { it.active } }
+    fun dismiss(id: Long) = store.dismiss(id, running(id))
+    fun clearFinished() = store.items.update { l -> l.filter { it.active } }
+
+    fun unfinishedCount(): Int = store.unfinishedCount()
 
     // ---------- persistence / lifecycle ----------
 
     /** Called once the session state is known and the user is signed in: starts everything that was left queued. */
     fun resume() {
-        val pending = _items.value.filter { it.state == State.QUEUED }.map { it.id }
-            .filter { synchronized(scheduled) { it !in scheduled } }
+        val pending = store.resumeStates().filter { synchronized(scheduled) { it !in scheduled } }
         if (pending.isNotEmpty()) startService()
         pending.forEach(::schedule)
         _settled.value = true
-    }
-
-    /** Signed out: pending work belongs to the account that left. Cancels it and forgets everything. */
-    fun clearAll() {
-        _items.value.forEach { if (it.active) cancel(it.id) else discardSource(it) }
-        _items.value = emptyList()
-        File(LocalCache.dir(app.applicationContext, LocalCache.UPLOAD).path).deleteRecursively()
-        storeFile.delete()
-        _settled.value = true
-    }
-
-    private fun savePersisted() {
-        runCatching {
-            val a = JSONArray()
-            _items.value.filter { it.active || it.state == State.FAILED }.forEach { t ->
-                a.put(JSONObject().put("id", t.id).put("name", t.name).put("uri", t.uri.toString()).put("parent", t.parent.value)
-                    .put("mime", t.mime ?: JSONObject.NULL).put("size", t.size).put("state", if (t.active) "QUEUED" else "FAILED")
-                    .put("error", t.error ?: JSONObject.NULL).put("file", t.file?.absolutePath ?: JSONObject.NULL)
-                    .put("startedAt", t.startedAt).put("staged", t.staged)
-                    .put("kind", t.kind.name).put("source", t.source?.value ?: JSONObject.NULL).put("move", t.move)
-                    .put("sources", JSONArray(t.sources.map { it.value })).put("docId", t.docId ?: JSONObject.NULL).put("prefix", t.prefix))
-            }
-            if (a.length() == 0) { storeFile.delete(); return }
-            val tmp = File(storeFile.parentFile, storeFile.name + ".part")
-            tmp.writeText(JSONObject().put("v", 1).put("items", a).toString())
-            if (!tmp.renameTo(storeFile)) tmp.delete()
+        // Name uploads a crash or a failed rename left under their temporary name, once nothing that could reuse them runs.
+        scope.launch {
+            store.items.first { l -> l.none { it.active } }
+            runCatching { app.filen.recoverUploads() }.getOrNull()?.takeIf { it > 0 }?.let { app.notifyChanged() }
         }
     }
 
-    /** Anything that was pending when the process died comes back as QUEUED (a failed one stays failed, retryable). */
-    private fun loadPersisted() {
-        if (!storeFile.isFile) return
-        val list = runCatching {
-            val a = JSONObject(storeFile.readText()).getJSONArray("items")
-            (0 until a.length()).mapNotNull { i ->
-                val o = a.getJSONObject(i)
-                val file = o.optString("file").takeIf { !o.isNull("file") && it.isNotEmpty() }?.let(::File)
-                if (file != null && !file.isFile) return@mapNotNull null // staged source vanished: nothing to resume
-                val failed = o.getString("state") == "FAILED"
-                Transfer(
-                    o.getLong("id"), o.getString("name"), Uri.parse(o.getString("uri")), ItemId(o.getString("parent")),
-                    o.optString("mime").takeIf { !o.isNull("mime") }, o.getLong("size"),
-                    state = if (failed) State.FAILED else State.QUEUED, error = o.optString("error").takeIf { failed && !o.isNull("error") },
-                    file = file, startedAt = o.optLong("startedAt"), staged = o.optBoolean("staged"),
-                    kind = runCatching { Kind.valueOf(o.getString("kind")) }.getOrDefault(Kind.UPLOAD),
-                    source = o.optString("source").takeIf { !o.isNull("source") && it.isNotEmpty() }?.let(::ItemId),
-                    move = o.optBoolean("move"),
-                    sources = o.optJSONArray("sources")?.let { a -> (0 until a.length()).map { ItemId(a.getString(it)) } } ?: emptyList(),
-                    docId = o.optString("docId").takeIf { !o.isNull("docId") && it.isNotEmpty() },
-                    prefix = o.optString("prefix", ""),
-                )
-            }
-        }.getOrNull() ?: return
-        _items.value = list
-        ids.set((list.maxOfOrNull { it.id } ?: 0L) + 1)
+    /**
+     * Signed out without the user asking (a stored session that can't be restored, for example): nothing can run, and
+     * nothing is discarded. Pending work is kept and resumes when the same account signs in again.
+     */
+    fun hold() {
+        val held = store.hold()
+        held.forEach { id -> synchronized(jobs) { jobs[id] }?.cancel() }
+        synchronized(scheduled) { scheduled.removeAll(held.toSet()) }
+        _settled.value = true
     }
 
-    /** Staging dirs of transfers that no longer exist are leftovers (the old behaviour wiped all of them at startup). */
-    private fun sweepOrphanStaging() {
-        val keep = _items.value.flatMap { listOfNotNull(it.id.toString(), it.file?.parentFile?.name) }.toSet()
-        LocalCache.dir(app.applicationContext, LocalCache.UPLOAD).listFiles()?.filter { it.name !in keep }?.forEach { it.deleteRecursively() }
-        // Archive scratch space is rebuilt from scratch by a resumed job, so whatever is there is leftover.
-        listOf("archive", "extract").forEach { LocalCache.dir(app.applicationContext, it).deleteRecursively() }
+    /**
+     * The user signed out of [leaving]: its pending work is cancelled and forgotten. Work held for another account stays,
+     * with its files.
+     */
+    fun clearAll(leaving: String?) {
+        store.clearFor(leaving).forEach { t -> synchronized(jobs) { jobs[t.id] }?.cancel() }
+        _settled.value = true
     }
 
     // ---------- worker ----------
@@ -347,47 +293,48 @@ class TransferManager(private val app: FilesApp) {
     private suspend fun process(id: Long) {
         val ctx = app.applicationContext
         val t0 = find(id) ?: return
-        if (t0.kind == Kind.COPY) { processCopy(t0); return }
-        if (t0.kind == Kind.ZIP || t0.kind == Kind.UNZIP || t0.kind == Kind.ADDZIP) { processArchive(t0); return }
+        if (t0.kind == TransferKind.COPY) { processCopy(t0); return }
+        if (t0.kind == TransferKind.SAVE) { processSave(t0); return }
+        if (t0.kind == TransferKind.ZIP || t0.kind == TransferKind.UNZIP || t0.kind == TransferKind.ADDZIP) { processArchive(t0); return }
         val storage = app.router.writable(t0.parent)
         if (storage == null) { fail(id, "This folder doesn't accept uploads."); return }
-        val staging = File(LocalCache.dir(ctx, LocalCache.UPLOAD), "$id").apply { mkdirs() }
+        val staging = store.stagingDir(id).apply { mkdirs() }
         val staged = t0.file ?: File(staging, t0.name.replace('/', '_').ifBlank { "upload" })
         try {
-            update(id) { it.copy(state = State.PREPARING, done = 0) }
+            step(id) { it.copy(state = TransferState.PREPARING, done = 0) }
             if (t0.file == null && !(t0.staged && staged.isFile)) {
                 // Stage a private copy: the SDK uploads from a path, and the picked Uri may stop being readable.
                 if (t0.size >= 0) LocalCache.requireSpace(ctx, t0.size)
-                val input = try { ctx.contentResolver.openInputStream(t0.uri)!! } catch (e: Exception) {
+                val input = try { ctx.contentResolver.openInputStream(Uri.parse(t0.uri))!! } catch (e: Exception) {
                     if (e is SecurityException || e is java.io.FileNotFoundException || e is NullPointerException)
                         throw java.io.IOException("The original file is no longer available. Pick it again to upload it.")
                     throw e
                 }
-                input.use { i -> staged.outputStream().use { o -> i.copyTo(o) } }
+                val part = File(staging, staged.name + ".part")
+                input.use { i -> part.outputStream().use { o -> i.copyTo(o) } }
+                if (!part.renameTo(staged)) throw java.io.IOException("Couldn't stage “${t0.name}”.")
                 update(id) { it.copy(staged = true) }
             }
             if (t0.file != null && !t0.file.isFile) throw java.io.IOException("The file to upload is gone.")
             val size = staged.length()
             update(id) { it.copy(size = size) }
-            // Resumed after a restart: the interrupted attempt may have reached the server already.
-            if (t0.startedAt > 0) findUploaded(t0, size, t0.startedAt)?.let { finishOk(id, it); return }
-
+            // No "did an earlier attempt land?" guess by name and size: an upload never replaces a file, so such a match can
+            // be an older file, and taking it for this one would discard the new content. Worst case a retry leaves a "(1)" copy.
             val maxAttempts = 4
             var attempt = 1
             while (true) {
-                update(id) { it.copy(state = State.UPLOADING, done = 0, attempt = attempt, error = null) }
+                if (find(id)?.active != true) return
+                step(id) { it.copy(state = TransferState.UPLOADING, done = 0, attempt = attempt, error = null) }
                 val started = System.currentTimeMillis()
                 update(id) { it.copy(startedAt = started) }
                 try {
-                    val uploaded = storage.upload(t0.parent, staged.absolutePath, t0.name, t0.mime) { sent -> update(id) { it.copy(done = sent) } }
+                    val uploaded = storage.upload(t0.parent, staged.absolutePath, t0.name, t0.mime) { sent -> step(id) { it.copy(done = sent) } }
                     finishOk(id, uploaded); return
                 } catch (e: CancellationException) { throw e
                 } catch (e: Throwable) {
                     if (e.failureKind() != FailureKind.NETWORK || attempt >= maxAttempts) { fail(id, e.friendlyOrNull() ?: e.message ?: "Upload failed"); return }
-                    update(id) { it.copy(state = State.WAITING_NETWORK, error = "Waiting for network…") }
+                    step(id) { it.copy(state = TransferState.WAITING_NETWORK, error = "Waiting for network…") }
                     if (!awaitNetwork(ctx, 10 * 60_000L)) { fail(id, "No network connection. Retry when you're back online."); return }
-                    // The failed attempt may have finished server-side before the connection dropped.
-                    findUploaded(t0, size, started)?.let { finishOk(id, it); return }
                     attempt++
                 }
             }
@@ -395,25 +342,82 @@ class TransferManager(private val app: FilesApp) {
             throw e
         } catch (e: Throwable) {
             fail(id, e.friendlyOrNull() ?: e.message ?: "Upload failed")
-        } finally {
-            withContext(kotlinx.coroutines.NonCancellable) {
-                staging.deleteRecursively()
-                update(id) { it.copy(staged = false) }
-                if (find(id)?.state == State.DONE) discardSource(t0) // failed file transfers keep their source for Retry
+        }
+        // The staged copy is kept until the transfer finished, was cancelled or dismissed (see TransferStore.afterJob).
+    }
+
+    /**
+     * Another app's save over an existing file. Checked just before the upload ([SaveOver.plan]); anything the check
+     * can't vouch for (changed elsewhere, gone, trashed, versioning off) is uploaded as a separate conflict copy, so
+     * neither the old nor the new content is ever lost. The local copy is kept until one of the two uploads landed.
+     */
+    private suspend fun processSave(t0: Transfer) {
+        val id = t0.id
+        val file = t0.file
+        val lineage = t0.lineage
+        try {
+            step(id) { it.copy(state = TransferState.PREPARING, done = 0, startedAt = System.currentTimeMillis()) }
+            if (file == null || !file.isFile || lineage == null) throw java.io.IOException("The saved file is gone.")
+            var attempt = 1
+            while (true) {
+                if (find(id)?.active != true) return
+                step(id) { it.copy(state = TransferState.UPLOADING, done = 0, attempt = attempt, error = null) }
+                try {
+                    val filen = app.filen
+                    val versioning = filen.versioningEnabled()
+                    val head = filen.headOfLineage(lineage)
+                    val headInfo = head?.let { h ->
+                        // No guessing where it is: uploading its name into the wrong folder would hit another file.
+                        val folder = if (h.trashed) t0.parent else filen.currentParent(h.item.id)
+                            ?: throw java.io.IOException("Couldn't tell which folder “${h.item.name}” is in. Retry.")
+                        SaveOver.Head(h.item.id.key, folder.value, h.item.name, h.trashed)
+                    }
+                    val plan = SaveOver.plan(versioning, headInfo, t0.base, store.ownSaves(lineage, t0.writer, before = id))
+                    val progress: (Long) -> Unit = { sent -> step(id) { it.copy(done = sent) } }
+                    when (plan) {
+                        is SaveOver.Plan.Replace -> {
+                            val (saved, previous) = filen.uploadVersion(ItemId(plan.parent), file.absolutePath, plan.name, t0.mime, progress)
+                            store.recordOwnSave(lineage, saved.id.key, id, t0.writer)
+                            val note = when {
+                                saved.lineage != null && saved.lineage != lineage ->
+                                    "Saved, but as a new version of another file named “${plan.name}” (the original was moved away meanwhile). Both are kept; see its version history."
+                                previous != null && previous != headInfo!!.uuid ->
+                                    "Saved. Another change to “${plan.name}” was saved at the same moment; both are in its version history."
+                                else -> null
+                            }
+                            finishOk(id, saved, note)
+                        }
+                        is SaveOver.Plan.Copy -> {
+                            val folder = headInfo?.takeIf { !it.trashed }?.parent?.let(::ItemId) ?: t0.parent
+                            val copy = filen.upload(folder, file.absolutePath, SaveOver.conflictName(headInfo?.name ?: t0.name), t0.mime, progress)
+                            finishOk(id, copy, "Saved as “${copy.name}” because ${plan.reason}. The original was not changed.")
+                        }
+                    }
+                    return
+                } catch (e: CancellationException) { throw e
+                } catch (e: Throwable) {
+                    if (e.failureKind() != FailureKind.NETWORK || attempt >= 4) { fail(id, e.friendlyOrNull() ?: e.message ?: "Save failed"); return }
+                    step(id) { it.copy(state = TransferState.WAITING_NETWORK, error = "Waiting for network…") }
+                    if (!awaitNetwork(app.applicationContext, 10 * 60_000L)) { fail(id, "No network connection. Retry when you're back online."); return }
+                    attempt++
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            fail(id, e.friendlyOrNull() ?: e.message ?: "Save failed")
         }
     }
 
     private suspend fun processCopy(t0: Transfer) {
         val id = t0.id
         try {
-            update(id) { it.copy(state = State.PREPARING, done = 0, startedAt = maxOf(it.startedAt, System.currentTimeMillis())) }
+            step(id) { it.copy(state = TransferState.PREPARING, done = 0, startedAt = maxOf(it.startedAt, System.currentTimeMillis())) }
             CopyRunner(
-                app, resumed = t0.startedAt > 0,
-                // `it.active` guards: a late progress tick must not resurrect a transfer that was just cancelled.
-                setTotal = { total -> update(id) { if (it.active) it.copy(size = total, state = State.UPLOADING) else it } },
-                setDone = { done -> update(id) { if (it.active) it.copy(done = done) else it } },
-                setWaiting = { w -> update(id) { if (!it.active) it else if (w) it.copy(state = State.WAITING_NETWORK, error = "Waiting for network…") else it.copy(state = State.UPLOADING, error = null) } },
+                app, CopyLedger(store.ledgerFile(id)),
+                setTotal = { total -> step(id) { it.copy(size = total, state = TransferState.UPLOADING) } },
+                setDone = { done -> step(id) { it.copy(done = done) } },
+                setWaiting = { w -> step(id) { if (w) it.copy(state = TransferState.WAITING_NETWORK, error = "Waiting for network…") else it.copy(state = TransferState.UPLOADING, error = null) } },
                 awaitNetwork = { awaitNetwork(app.applicationContext, 10 * 60_000L) },
             ).run(t0.source ?: error("No source"), t0.parent, t0.move)
             finishOk(id)
@@ -428,26 +432,25 @@ class TransferManager(private val app: FilesApp) {
         val id = t0.id
         val work = File(LocalCache.dir(app.applicationContext, "archive"), "$id")
         try {
-            update(id) { it.copy(state = State.PREPARING, done = 0, startedAt = maxOf(it.startedAt, System.currentTimeMillis())) }
-            val active: (Transfer) -> Boolean = { it.active }
+            step(id) { it.copy(state = TransferState.PREPARING, done = 0, startedAt = maxOf(it.startedAt, System.currentTimeMillis())) }
             val runner = ArchiveRunner(
                 app, work,
-                setTotal = { total -> update(id) { if (active(it)) it.copy(size = total, state = State.UPLOADING, done = 0) else it } },
-                setDone = { done -> update(id) { if (active(it)) it.copy(done = done) else it } },
+                setTotal = { total -> step(id) { it.copy(size = total, state = TransferState.UPLOADING, done = 0) } },
+                setDone = { done -> step(id) { it.copy(done = done) } },
                 deliver = { local, dest ->
-                    update(id) { if (active(it)) it.copy(done = 0, state = State.PREPARING) else it }
+                    step(id) { it.copy(done = 0, state = TransferState.PREPARING) }
                     CopyRunner(
-                        app, resumed = false,
-                        setTotal = { total -> update(id) { if (active(it)) it.copy(size = total, state = State.UPLOADING, done = 0) else it } },
-                        setDone = { done -> update(id) { if (active(it)) it.copy(done = done) else it } },
-                        setWaiting = { w -> update(id) { if (!it.active) it else if (w) it.copy(state = State.WAITING_NETWORK, error = "Waiting for network…") else it.copy(state = State.UPLOADING, error = null) } },
+                        app,
+                        setTotal = { total -> step(id) { it.copy(size = total, state = TransferState.UPLOADING, done = 0) } },
+                        setDone = { done -> step(id) { it.copy(done = done) } },
+                        setWaiting = { w -> step(id) { if (w) it.copy(state = TransferState.WAITING_NETWORK, error = "Waiting for network…") else it.copy(state = TransferState.UPLOADING, error = null) } },
                         awaitNetwork = { awaitNetwork(app.applicationContext, 10 * 60_000L) },
                     ).run(local, dest, move = false)
                 },
             )
             when (t0.kind) {
-                Kind.ZIP -> runner.zip(t0.sources, t0.parent, t0.name)
-                Kind.ADDZIP -> {
+                TransferKind.ZIP -> runner.zip(t0.sources, t0.parent, t0.name)
+                TransferKind.ADDZIP -> {
                     // Sources are either staged copies of picked documents or ordinary items from any storage.
                     val files = t0.sources.map { sid ->
                         val local = if (sid.scheme == "local") File(sid.key).takeIf { it.isFile } else null
@@ -462,29 +465,27 @@ class TransferManager(private val app: FilesApp) {
                 else -> runner.unzip(t0.source ?: error("No archive"), t0.parent)
             }
             finishOk(id)
-            if (t0.kind == Kind.ADDZIP) discardSource(t0)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            fail(id, e.friendlyOrNull() ?: e.message ?: "Couldn't ${when (t0.kind) { Kind.ZIP -> "compress"; Kind.ADDZIP -> "update the zip"; else -> "extract" }}")
+            fail(id, e.friendlyOrNull() ?: e.message ?: "Couldn't ${when (t0.kind) { TransferKind.ZIP -> "compress"; TransferKind.ADDZIP -> "update the zip"; else -> "extract" }}")
         } finally {
             withContext(kotlinx.coroutines.NonCancellable) { work.deleteRecursively() }
         }
     }
 
-    private fun finishOk(id: Long, uploaded: app.filenfiles.core.FileItem? = null) {
+    private fun finishOk(id: Long, uploaded: app.filenfiles.core.FileItem? = null, note: String? = null) {
+        store.ledgerFile(id).delete()
+        // An app that created a file knows exactly what is in it: its next save builds on this upload.
+        find(id)?.takeIf { it.kind == TransferKind.UPLOAD && it.docId != null && it.writer >= 0 }?.let { t ->
+            uploaded?.lineage?.let { store.noteRead(t.writer, it, uploaded.id.key) }
+        }
         // Receipt first: a provider listing between "no longer pending" and "visible in Filen" must still show the file.
         if (uploaded != null) find(id)?.let { recentUploads.add(it.parent, uploaded); it.docId?.let { d -> docIds.put(d, uploaded.id.value) } }
-        update(id) { it.copy(state = State.DONE, done = it.size, error = null) }
+        store.finish(id, note)
         app.notifyChanged()
         find(id)?.let { app.docsChanged(it.parent) }
     }
-
-    private fun fail(id: Long, msg: String) = update(id) { it.copy(state = State.FAILED, error = msg) }
-
-    private suspend fun findUploaded(t: Transfer, size: Long, since: Long): app.filenfiles.core.FileItem? = runCatching {
-        app.router.list(t.parent).items.firstOrNull { !it.isDirectory && it.name == t.name && it.size == size && it.modified >= since - 60_000 }
-    }.getOrNull()
 
     /** Suspends until a validated network is available; false after [timeoutMs]. */
     private suspend fun awaitNetwork(ctx: Context, timeoutMs: Long): Boolean {
@@ -519,4 +520,5 @@ class TransferManager(private val app: FilesApp) {
             TransferResumeWorker.enqueue(ctx)
         }
     }
+
 }

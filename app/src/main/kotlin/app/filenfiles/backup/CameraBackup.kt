@@ -147,8 +147,8 @@ object CameraBackup {
                 val name = Names.unique(existing.map { it.first }, f.name)
                 val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(f.extension.lowercase())
                 try {
-                    storage.upload(monthId, f.absolutePath, name, mime) {}
-                    existing += name to f.length()
+                    val saved = storage.upload(monthId, f.absolutePath, name, mime) {}
+                    existing += saved.name to f.length()
                     state.done += key; uploaded++
                     if (uploaded % 5 == 0) saveState(app, state)
                 } catch (e: CancellationException) { throw e

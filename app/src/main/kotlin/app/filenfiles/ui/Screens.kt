@@ -114,7 +114,13 @@ fun AccountAction(env: AppEnv, modifier: Modifier = Modifier) {
     if (show) AlertDialog(
         onDismissRequest = { show = false },
         title = { Text("Filen account") },
-        text = { Text(email?.let { "Signed in as $it" } ?: if (state is FilenSession.State.Expired) "Session expired" else "Not signed in") },
+        text = {
+            val unfinished = if (state is FilenSession.State.LoggedIn) env.app.transfers.unfinishedCount() else 0
+            Text(
+                (email?.let { "Signed in as $it" } ?: if (state is FilenSession.State.Expired) "Session expired" else "Not signed in") +
+                    if (unfinished > 0) "\n\nSigning out discards $unfinished unfinished ${if (unfinished == 1) "transfer" else "transfers"}, including files not uploaded yet." else "",
+            )
+        },
         confirmButton = {
             if (state is FilenSession.State.LoggedIn)
                 TextButton({ show = false; env.app.session.logout() }) { Text("Sign out") }

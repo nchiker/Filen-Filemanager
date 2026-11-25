@@ -65,6 +65,7 @@ class FilenSession(private val context: Context) {
         val s = c.toStringified()
         prefs.edit().putString("session", encode(s)).putString("lastEmail", s.email).apply()
         _client = c
+        signedOutByUser = false
         _state.value = State.LoggedIn(s.email)
     }
 
@@ -73,7 +74,17 @@ class FilenSession(private val context: Context) {
 
     suspend fun resendConfirmation(email: String) { unauth().resendRegistrationConfirmation(email.trim()) }
 
+    /** True only after the user chose to sign out: the one case where unfinished uploads may be discarded. */
+    @Volatile var signedOutByUser = false
+        private set
+
+    /** The account the user last signed out of. */
+    @Volatile var signedOutEmail: String? = null
+        private set
+
     fun logout() {
+        signedOutEmail = (_state.value as? State.LoggedIn)?.email
+        signedOutByUser = true
         prefs.edit().remove("session").apply()
         _client = null
         _state.value = State.LoggedOut

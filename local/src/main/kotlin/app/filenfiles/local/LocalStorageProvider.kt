@@ -167,6 +167,14 @@ class LocalStorageProvider(private val context: Context) : StorageProvider, Writ
         id(d)
     }
 
+    /** Shared storage refuses the FAT-unsafe characters (Android's FileUtils.isValidFatFilename) and over-long names. */
+    override fun nameProblem(name: String): String? = when {
+        name.isEmpty() || name == "." || name == ".." -> "The name is empty or not allowed."
+        name.toByteArray(Charsets.UTF_8).size > 255 -> "The name is too long for this phone."
+        name.any { it.code < 0x20 || it.code == 0x7F || it in "\"*/:<>?\\|" } -> "This phone's storage can't hold \" * / : < > ? \\ | in a name."
+        else -> null
+    }
+
     /** For local storage "upload" means copy a file into the folder. */
     override suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FileItem =
         withContext(Dispatchers.IO) {
@@ -193,6 +201,9 @@ class LocalStorageProvider(private val context: Context) : StorageProvider, Writ
         check(src.renameTo(dst)) { "Could not move (different storage volume?)" }
         toItem(dst)
     }
+
+    /** [File.delete] refuses a folder with anything in it. */
+    override suspend fun removeEmptyFolder(folder: FileItem): Boolean = withContext(Dispatchers.IO) { File(folder.id.key).delete() }
 
     /** Local deletion is permanent: no undo. */
     override suspend fun trash(item: FileItem): (suspend () -> Unit)? = withContext(Dispatchers.IO) {

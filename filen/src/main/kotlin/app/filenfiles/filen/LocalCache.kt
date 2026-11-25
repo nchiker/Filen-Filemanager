@@ -5,12 +5,13 @@ import java.io.File
 
 /**
  * Everything the app writes to disk that is a decrypted copy of cloud data (opened files, thumbnails)
- * or a staging copy of a pending upload. All of it is disposable: it is size-capped, swept at startup
- * (no transfer can be running then, so partial files are garbage) and wiped on sign-out / session expiry.
+ * All of it is disposable: it is size-capped, swept at startup and wiped on sign-out / session expiry.
+ * Content waiting to be uploaded is NOT disposable and lives in [outbox], outside the cache.
  */
 object LocalCache {
     const val OPEN = "open"
     const val THUMBS = "thumbs"
+    /** Where pending uploads used to be staged; only swept now (a queue saved by an older build may still point there). */
     const val UPLOAD = "upload"
     /** Persisted search index (decrypted names): small, account-bound, wiped with the rest. */
     const val INDEX = "index"
@@ -21,6 +22,8 @@ object LocalCache {
     const val FREE_MARGIN = 64L shl 20
 
     fun dir(ctx: Context, name: String) = File(ctx.cacheDir, name)
+    /** Content on its way to Filen. In files/, so neither Android nor "Clear cache" deletes it; the transfer queue owns it. */
+    fun outbox(ctx: Context) = File(ctx.filesDir, "outbox")
     fun freeBytes(ctx: Context) = ctx.cacheDir.usableSpace
 
     /** Throws an out-of-space error if [bytes] (plus a safety margin) won't fit. */

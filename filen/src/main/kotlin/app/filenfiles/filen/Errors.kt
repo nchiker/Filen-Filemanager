@@ -30,6 +30,14 @@ fun Throwable.failureKind(): FailureKind {
     }
 }
 
+/** Filen refusing a file rename because another file in that folder holds the name (ignoring case). */
+fun Throwable.isNameTaken(): Boolean {
+    if (this !is FilenSdkException) return false
+    val code = "file_with_name_already_exists_at_destination"
+    return runCatching { serverCode() }.getOrNull() == code ||
+        runCatching { innerMessage() + " " + message() }.getOrNull()?.contains(code) == true
+}
+
 /** User-facing sentence for failures with a known cause, or null to fall back to the raw message. */
 fun Throwable.friendlyOrNull(): String? = when (failureKind()) {
     FailureKind.AUTH -> "Your Filen session has expired. Sign in again."

@@ -162,7 +162,7 @@ class FilesApp : Application() {
                 }
                 when (it) {
                     is FilenSession.State.LoggedIn -> { transfers.resume(); PinSyncWorker.schedule(this@FilesApp); app.filenfiles.stacklink.SharedWatcher.apply { schedule(this@FilesApp); startListening(this@FilesApp) } }
-                    is FilenSession.State.LoggedOut -> { transfers.clearAll(); app.filenfiles.backup.CameraBackup.disableAndForget(this@FilesApp) }
+                    is FilenSession.State.LoggedOut -> { if (session.signedOutByUser) transfers.clearAll(session.signedOutEmail) else transfers.hold(); app.filenfiles.backup.CameraBackup.disableAndForget(this@FilesApp) }
                     else -> Unit
                 }
                 if (it is FilenSession.State.LoggedIn) runCatching {

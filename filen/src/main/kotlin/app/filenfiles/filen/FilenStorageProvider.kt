@@ -6,6 +6,11 @@ import app.filenfiles.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
+import java.security.MessageDigest
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import uniffi.filen_sdk_rs.AnyDirWithContext
@@ -135,7 +140,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val i = fileInfo(f.meta, f.uuid)
         return FileItem(
             ItemId("$P:${f.uuid}"), i.name, false, f.size.toLong(), i.modified ?: f.timestamp,
-            mimeOf(i.name, i.mime), Origin.FILEN_PERSONAL,
+            mimeOf(i.name, i.mime), Origin.FILEN_PERSONAL, lineage = f.stableUuid,
         )
     }
 
@@ -522,6 +527,17 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
     }
 
+    override suspend fun freshStat(id: ItemId): FileItem? {
+        if (id.scheme != P || id.key == ROOT) return stat(id)
+        return io {
+            val f = client.getFileOptional(id.key)
+            if (f == null) return@io client.getDirOptional(id.key)?.takeIf { it.parent !is ParentUuid.Trash }?.let(::personalDirItem)
+            // A replaced version still answers to its old uuid, so ask for the file's current one.
+            val head = f.stableUuid?.let { client.getFileByStableUuidOptional(it) } ?: f
+            head.takeIf { it.uuid == id.key && it.parent !is ParentUuid.Trash }?.let(::personalFileItem)
+        }
+    }
+
     override suspend fun favorites(): List<FileItem> = io {
         val r = client.listFavorites()
         r.dirs.map(::personalDirItem) + r.files.map(::personalFileItem)
@@ -819,12 +835,62 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     class StackLookup(val exists: Boolean, val path: String?, val trashed: Boolean, val shared: Boolean)
 
     suspend fun stackLookup(uuid: String): StackLookup = io {
-        val f = client.getFileOptional(uuid)
-        if (f == null) return@io StackLookup(false, null, false, false)
+        // A uuid Stack stored before the file was saved again names an older version: answer for the file as it is now.
+        val f = headOf(client.getFileOptional(uuid) ?: return@io StackLookup(false, null, false, false))
+            ?: return@io StackLookup(false, null, false, false)
         personalFileItem(f)
         if (f.parent is ParentUuid.Trash) return@io StackLookup(true, null, true, false)
-        StackLookup(true, filePath(uuid), false, runCatching { stillShared(uuid) }.getOrDefault(false))
+        StackLookup(true, filePath(f.uuid), false, runCatching { stillShared(f.uuid) }.getOrDefault(false))
     }
+
+    /** The current version of [f]'s file (itself if it is current); null when the file is gone. Asked of Filen. */
+    private suspend fun headOf(f: FFile): FFile? {
+        val stable = f.stableUuid ?: return f
+        return client.getFileByStableUuidOptional(stable)
+    }
+
+    /** What a document id names now: the current version of its file, whichever version's uuid the id holds. */
+    class Head(val item: FileItem, val trashed: Boolean)
+
+    /** [id] resolved through its file's versions to the current one, asked of Filen (no cache); null when gone. */
+    suspend fun currentHead(id: ItemId): Head? = io {
+        if (id.scheme != P || id.key == ROOT) return@io null
+        val row = client.getFileOptional(id.key)
+        // The first version's uuid IS the whole-life id, so an id still resolves after that version's row is gone.
+        val head = (if (row != null) headOf(row) else client.getFileByStableUuidOptional(id.key)) ?: return@io null
+        Head(personalFileItem(head), head.parent is ParentUuid.Trash)
+    }
+
+    /** The current version of the file whose whole-life id is [lineage]; null only when Filen no longer knows it. */
+    suspend fun headOfLineage(lineage: String): Head? = io {
+        client.getFileByStableUuidOptional(lineage)?.let { Head(personalFileItem(it), it.parent is ParentUuid.Trash) }
+    }
+
+    /** Folder of the current version of [id]'s file (a superseded version's row may not say). */
+    suspend fun currentParent(id: ItemId): ItemId? = io {
+        val head = client.getFileOptional(id.key)?.let { headOf(it) } ?: return@io parentOf(id)
+        (head.parent as? ParentUuid.Uuid)?.v1?.let { if (it == rootUuid) ItemId("$P:$ROOT") else ItemId("$P:$it") }
+    }
+
+    /**
+     * Uploads [localPath] as [name] into [parent] so that it REPLACES the file holding that name there (Filen keeps the
+     * replaced content as an earlier version when versioning is on). Only for saving over a file: callers check the
+     * file and versioning first ([app.filenfiles.core.SaveOver]). Returns the new version and the version it replaced
+     * per the version list (null when that can't be told).
+     */
+    suspend fun uploadVersion(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): Pair<FileItem, String?> = io {
+        var sent = 0L
+        val cb = object : JsFileUploadCallback {
+            override fun onUpdate(uploadedBytes: ULong) { sent += uploadedBytes.toLong(); onProgress(sent) }
+        }
+        val f = client.uploadFile(FileBuilderParamsOptionalName(personalDir(parent), name, null, null, mime), localPath, cb, ManagedFuture(null, null))
+        val item = personalFileItem(f).also { indexUpsert(it, parent.normalizedParent()) }
+        val previous = runCatching {
+            client.listFileVersions(f).filter { it.uuid != f.uuid }.maxByOrNull { it.timestamp }?.uuid
+        }.getOrNull()
+        item to previous
+    }
+
 
     /** `locate(uri)`: the uuid and path of a Filen document id (`filen:<uuid>` or `filen-in:<uuid>`). */
     suspend fun stackPath(id: ItemId): String? = io {
@@ -837,6 +903,8 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override fun canWrite(folder: ItemId) = folder.scheme == P
 
+    override fun nameProblem(name: String): String? = FilenNames.problem(name)
+
     private suspend fun personalDir(id: ItemId): AnyNormalDir {
         require(id.scheme == P) { "Uploads are only supported into your personal Filen drive" }
         val root = rootUuid
@@ -848,17 +916,105 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         personalDirItem(d).also { indexUpsert(it, parent.normalizedParent()) }.id
     }
 
+    /** Uploads under their temporary name that were not yet named (on disk: a crash or kill must not strand them). */
+    private val journal by lazy { UploadJournal(JFile(context.filesDir, "upload-names")) }
+    private val uploadLocks = ConcurrentHashMap<String, Mutex>()
+    private fun account(): String = (session.state.value as? FilenSession.State.LoggedIn)?.email ?: ""
+
+    /**
+     * Always creates a NEW file. Filen replaces a same-name file on upload (for good with versioning off), so the
+     * content goes up under a name of its own and is then renamed; a taken name becomes "name (1)" (see [SafeCreate]).
+     * The returned item carries the name it really got. If the rename fails, the file stays under its upload name
+     * until a retry of the same upload reuses that name, or [recoverUploads] names it.
+     */
     override suspend fun upload(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FileItem =
         io {
-            var sent = 0L
-            val cb = object : JsFileUploadCallback {
-                // `uploadedBytes` is a delta since the previous call
-                override fun onUpdate(uploadedBytes: ULong) { sent += uploadedBytes.toLong(); onProgress(sent) }
+            FilenNames.problem(name)?.let { throw java.io.IOException("Filen can't store “$name”. $it") } // before any upload
+            val tempName = SafeCreate.tempName(uploadDigest(parent.normalizedParent(), name, JFile(localPath)), name)
+            uploadLocks.getOrPut(tempName) { Mutex() }.withLock {
+                val f = renamedEarlier(tempName) ?: createUnder(tempName, parent, localPath, name, mime, onProgress)
+                journal.remove(tempName)
+                personalFileItem(f).also { indexUpsert(it, parent.normalizedParent()) }
             }
-            val params = FileBuilderParamsOptionalName(personalDir(parent), name, null, null, mime)
-            val f = client.uploadFile(params, localPath, cb, ManagedFuture(null, null))
-            personalFileItem(f).also { indexUpsert(it, parent.normalizedParent()) }
         }
+
+    private suspend fun createUnder(tempName: String, parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): FFile {
+        var sent = 0L
+        val cb = object : JsFileUploadCallback {
+            // `uploadedBytes` is a delta since the previous call
+            override fun onUpdate(uploadedBytes: ULong) { sent += uploadedBytes.toLong(); onProgress(sent) }
+        }
+        val dir = personalDir(parent)
+        val params = FileBuilderParamsOptionalName(dir, tempName, null, null, mime)
+        // Written first: if the process dies after the server stored the file but before we hear of it, it can be found.
+        val entry = UploadJournal.Entry(tempName, parent.value, name, account())
+        journal.put(entry)
+        val uploaded = client.uploadFile(params, localPath, cb, ManagedFuture(null, null))
+        journal.put(entry.copy(uuid = uploaded.uuid))
+        // The content is up: a cancel now must not leave it under the upload name, so the naming always finishes.
+        return withContext(NonCancellable) { claim(uploaded, name, dir) }
+    }
+
+    private suspend fun claim(f: FFile, name: String, dir: AnyNormalDir): FFile = SafeCreate.claimName(
+        name,
+        takenNames = { client.listDir(dir).files.map { fileInfo(it.meta, it.uuid).name } },
+        isTaken = { it.isNameTaken() },
+    ) { candidate -> client.updateFileMetadata(f, FileMetaChanges(name = candidate, created = CreatedTime.Keep)) }
+
+    /** The file an earlier try uploaded as [tempName], if its rename did reach Filen although we saw a failure. */
+    private suspend fun renamedEarlier(tempName: String): FFile? {
+        val e = journal[tempName]?.takeIf { it.account == account() } ?: return null
+        val f = client.getFileOptional(e.uuid ?: return null) ?: return null
+        val current = fileInfo(f.meta, f.uuid).name
+        if (f.parent is ParentUuid.Trash || current == tempName) return null
+        // The failure may have come after the rename but before shares and links were told the new name: say it again.
+        return runCatching { client.updateFileMetadata(f, FileMetaChanges(name = current, created = CreatedTime.Keep)) }.getOrDefault(f)
+    }
+
+    /**
+     * Gives files left under their temporary upload name (after a crash, a kill, a cancel during the upload or a failed
+     * rename) the name they were uploaded for, "name (1)" if it is taken. Never deletes anything: a file that can't be
+     * named now stays as it is and is tried again next time. Call when no upload is running. Returns how many were named.
+     */
+    suspend fun recoverUploads(): Int = io {
+        val me = account().ifEmpty { return@io 0 }
+        var named = 0
+        for (e0 in journal.all().filter { it.account == me }) {
+            runCatching {
+                uploadLocks.getOrPut(e0.tempName) { Mutex() }.withLock {
+                    val e = journal[e0.tempName] ?: return@withLock
+                    val dir = personalDir(ItemId(e.parent))
+                    val uuid = e.uuid
+                    val f = if (uuid != null) client.getFileOptional(uuid)
+                    else client.listDir(dir).files.firstOrNull { fileInfo(it.meta, it.uuid).name == e.tempName }
+                    // Gone, trashed, or already named (by the user or a lost reply): nothing left to do.
+                    if (f == null || f.parent is ParentUuid.Trash || fileInfo(f.meta, f.uuid).name != e.tempName) { journal.remove(e.tempName); return@withLock }
+                    val out = withContext(NonCancellable) { claim(f, e.name, dir) }
+                    // The entry stays (now pointing at a named file) so a Retry of that transfer in this session reuses
+                    // the file instead of uploading a "(1)"; the next pass drops it.
+                    personalFileItem(out).also { indexUpsert(it, ItemId(e.parent).normalizedParent()) }
+                    named++
+                }
+            }.onFailure { android.util.Log.w("FilenUpload", "Couldn't name a leftover upload yet: ${it.message}") }
+        }
+        named
+    }
+
+    /** Per install, so two devices uploading the same file to the same place don't share an upload name. */
+    private val uploadSalt: String by lazy {
+        val p = context.getSharedPreferences("upload_names", Context.MODE_PRIVATE)
+        p.getString("salt", null) ?: java.util.UUID.randomUUID().toString().also { p.edit().putString("salt", it).commit() }
+    }
+
+    private suspend fun uploadDigest(parent: String, name: String, file: JFile): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update("$uploadSalt\u0000$parent\u0000$name\u0000".toByteArray())
+        file.inputStream().use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) { kotlin.coroutines.coroutineContext.ensureActive(); val n = input.read(buf); if (n < 0) break; digest.update(buf, 0, n) }
+        }
+        return digest.digest()
+    }
 
     private suspend fun fileObj(id: ItemId) = personalFiles[id.key] ?: client.getFile(id.key)
     private suspend fun dirObj(id: ItemId) = personalDirObjs[id.key] ?: client.getDir(id.key)
@@ -879,6 +1035,14 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     override suspend fun move(item: FileItem, newParent: ItemId): FileItem = io {
         require(canModify(item)) { "This item cannot be moved" }
         val parent = personalDir(newParent)
+        if (!item.isDirectory) {
+            // Filen does not refuse this: the file already there would stop being current (gone with versioning off).
+            // It refuses folders itself. Another device could still add the name between this check and the move.
+            val now = client.getFile(item.id.key) // the cached name may be older than a rename made elsewhere
+            val name = fileInfo(now.meta, now.uuid).name
+            val clash = client.listDir(parent).files.any { it.uuid != item.id.key && fileInfo(it.meta, it.uuid).name.lowercase() == name.lowercase() }
+            if (clash) throw java.io.IOException("“$name” already exists in that folder. Rename one of them first.")
+        }
         val out = if (item.isDirectory) personalDirItem(client.moveDir(dirObj(item.id), parent))
         else personalFileItem(client.moveFile(fileObj(item.id), parent))
         indexUpsert(out, newParent.normalizedParent()); notifyMoved(out); notifyFolderMoved(out); out
@@ -889,10 +1053,10 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val inside = filesBeforeTrash(item)
         val undo: suspend () -> Unit = if (item.isDirectory) {
             val t = client.trashDir(dirObj(item.id))
-            ({ io { val di = personalDirItem(client.restoreDir(t)); indexUpsert(di, null); indexMarkDirty(); notifyFolderMoved(di) } })
+            ({ io { checkRestorable(dirName(t.meta), t.parent); val di = personalDirItem(client.restoreDir(t)); indexUpsert(di, null); indexMarkDirty(); notifyFolderMoved(di) } })
         } else {
             val t = client.trashFile(fileObj(item.id))
-            ({ io { val f = client.restoreFile(t); val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi) } })
+            ({ io { checkRestorable(fileInfo(t.meta, t.uuid).name, t.parent); val f = client.restoreFile(t); val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi) } })
         }
         indexRemoveSubtree(item.id)
         notifyRemoved(item, "trashed")
@@ -904,6 +1068,24 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     private val trashedFiles = ConcurrentHashMap<String, FFile>()
     private val trashedDirs = ConcurrentHashMap<String, Dir>()
+
+    /**
+     * Restore puts an item back in the folder it came from. What the server does when that folder now holds an item of
+     * the same name (ignoring case) is unknown, and it might replace it, so such a restore is refused, as is one whose
+     * folder can't be checked. A race with another device between this check and the restore remains.
+     */
+    private suspend fun checkRestorable(name: String, parent: ParentUuid) {
+        val from = (parent as? ParentUuid.Trash)?.v1?.takeIf { it.isNotEmpty() && it != NIL_UUID }
+            ?: throw java.io.IOException("Couldn't tell which folder “$name” came from, so it was not restored (to be safe). Restore it in the Filen web app.")
+        val dir = if (from == rootUuid) AnyNormalDir.Root(client.root())
+        else AnyNormalDir.Dir(client.getDirOptional(from)?.takeIf { it.parent !is ParentUuid.Trash }
+            ?: throw java.io.IOException("The folder “$name” came from is gone or in the trash. Restore that folder first."))
+        val l = client.listDir(dir)
+        val key = name.lowercase()
+        if (l.files.any { fileInfo(it.meta, it.uuid).name.lowercase() == key } || l.dirs.any { dirName(it.meta).lowercase() == key }) {
+            throw java.io.IOException("“$name” was not restored: its folder now holds an item with that name. Rename or move that one first.")
+        }
+    }
 
     override suspend fun listTrash(): List<FileItem> = io {
         val res = timed("listTrash") { client.listTrash() }
@@ -920,10 +1102,14 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override suspend fun restore(item: FileItem): Unit = io {
         if (item.isDirectory) {
-            val d = client.restoreDir(trashedDirs[item.id.key] ?: error("Trash changed; reload it"))
+            val t = trashedDirs[item.id.key] ?: error("Trash changed; reload it")
+            checkRestorable(dirName(t.meta), t.parent)
+            val d = client.restoreDir(t)
             val di = personalDirItem(d); indexUpsert(di, personalParentId(d.parent)); indexMarkDirty() /* its subtree comes back too */; notifyFolderMoved(di)
         } else {
-            val f = client.restoreFile(trashedFiles[item.id.key] ?: error("Trash changed; reload it"))
+            val t = trashedFiles[item.id.key] ?: error("Trash changed; reload it")
+            checkRestorable(fileInfo(t.meta, t.uuid).name, t.parent)
+            val f = client.restoreFile(t)
             val fi = personalFileItem(f); indexUpsert(fi, personalParentId(f.parent)); notifyMoved(fi)
         }
         trashedDirs.remove(item.id.key); trashedFiles.remove(item.id.key)
@@ -1010,6 +1196,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
                 client.downloadFileToPath(any, tmp.absolutePath, cb, ManagedFuture(null, null))
             }
             check(tmp.length() == item.size) { "Download was incomplete (${tmp.length()} of ${item.size} bytes). Try again." }
+            check(!dest.exists()) { "“${dest.name}” appeared while downloading. Try again." }
             check(tmp.renameTo(dest)) { "Could not finalise download" }
         } finally {
             tmp.delete()
@@ -1040,6 +1227,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         const val IN = "filen-in"
         const val OUT = "filen-out"
         const val ROOT = "root"
+        private const val NIL_UUID = "00000000-0000-0000-0000-000000000000"
         /** Own edits patch the index in place, so these only bound drift from changes made elsewhere (web, other devices). */
         private const val PERSONAL_TTL = 6 * 3_600_000L
         private const val SHARED_TTL = 24 * 3_600_000L

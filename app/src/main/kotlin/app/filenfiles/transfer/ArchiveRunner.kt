@@ -117,7 +117,7 @@ class ArchiveRunner(
                 // Only now is the new zip safely stored; swap it in. If the rename fails the user still has the updated zip.
                 storage.trash(item)
                 try { storage.rename(uploaded, item.name) }
-                catch (e: Throwable) { throw IOException("The updated zip was saved as “$tmpName” (renaming it back failed).") }
+                catch (e: Throwable) { throw IOException("The updated zip was saved as “${uploaded.name}” (renaming it back failed).") }
             }
         } finally {
             workDir.deleteRecursively()

@@ -26,6 +26,7 @@ import app.filenfiles.FilesApp
 import app.filenfiles.MainActivity
 import app.filenfiles.R
 import app.filenfiles.core.FileItem
+import app.filenfiles.core.FilenNames
 import app.filenfiles.core.Folder
 import app.filenfiles.core.Listing
 import app.filenfiles.filen.FailureKind
@@ -34,6 +35,8 @@ import app.filenfiles.core.ItemId
 import app.filenfiles.core.Origin
 import app.filenfiles.core.UploadStatus
 import app.filenfiles.transfer.TransferManager
+import app.filenfiles.transfer.TransferState
+import app.filenfiles.transfer.TransferStore
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.LocalCache
 import app.filenfiles.filen.friendlyOrNull
@@ -80,9 +83,9 @@ class FilenDocumentsProvider : DocumentsProvider() {
     private fun pendingRow(id: String): PendingRow? {
         pending[id]?.takeIf { !it.closed }?.let { return PendingRow(it.id, it.parent, it.name, it.mime, it.size, UploadStatus.UPLOADING) }
         val t = app.transfers.byDocId(id) ?: return null
-        if (!(t.active || t.state == TransferManager.State.FAILED)) return null
+        if (!(t.active || t.state == TransferState.FAILED)) return null
         return PendingRow(id, t.parent, t.name, t.mime ?: "application/octet-stream", maxOf(t.size, t.file?.length() ?: 0L),
-            UploadStatus.summary(t.state == TransferManager.State.WAITING_NETWORK, t.state == TransferManager.State.FAILED, t.error))
+            UploadStatus.summary(t.state == TransferState.WAITING_NETWORK, t.state == TransferState.FAILED, t.error))
     }
 
     private fun pendingRowsIn(parent: ItemId): List<PendingRow> =
@@ -189,6 +192,27 @@ class FilenDocumentsProvider : DocumentsProvider() {
         return id
     }
 
+    /**
+     * What [documentId] names now. A Filen file id is followed through its versions to the current one, so an id handed
+     * out before the file was saved again (by us or elsewhere) keeps working. Offline, the last known item answers.
+     * Second: true when the file is in the trash.
+     */
+    private fun current(documentId: String, signal: CancellationSignal? = null): Pair<FileItem, Boolean>? {
+        val id = idOf(documentId)
+        if (id.scheme != "filen" || id.key == "root") return io { blocking(signal) { app.router.stat(id) } }?.let { it to false }
+        return io {
+            blocking(signal) {
+                try {
+                    app.filen.currentHead(id)?.let { it.item to it.trashed } ?: app.router.freshStat(id)?.let { it to false }
+                } catch (e: CancellationException) { throw e
+                } catch (e: Exception) {
+                    if (e.failureKind() != FailureKind.NETWORK) throw e
+                    app.router.stat(id)?.let { it to false }
+                }
+            }
+        }
+    }
+
     private fun <T> io(block: () -> T): T = try { block() } catch (e: Exception) {
         if (e is OperationCanceledException || e is FileNotFoundException || e is AuthenticationRequiredException) throw e
         throw java.io.IOException(e.friendlyOrNull() ?: e.message ?: e.javaClass.simpleName, e)
@@ -242,19 +266,24 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    private fun MatrixCursor.addItem(item: FileItem) {
+    private fun MatrixCursor.addItem(item: FileItem, documentId: String = item.id.value) {
         var flags = 0
         val mime = if (item.isDirectory) Document.MIME_TYPE_DIR else item.mime ?: "application/octet-stream"
         if (item.isDirectory && item.origin == Origin.FILEN_PERSONAL) flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
         if (!item.isDirectory && mime.startsWith("image/")) flags = flags or Document.FLAG_SUPPORTS_THUMBNAIL
         if (app.router.modifier(item) != null) flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or Document.FLAG_SUPPORTS_MOVE
+        // Saving over a file (needs versioning on, checked when it is opened for writing).
+        if (!item.isDirectory && item.origin == Origin.FILEN_PERSONAL && item.lineage != null) flags = flags or Document.FLAG_SUPPORTS_WRITE
+        val save = item.lineage?.let { app.transfers.pendingSave(it) }
         newRow().apply {
-            add(Document.COLUMN_DOCUMENT_ID, item.id.value)
+            add(Document.COLUMN_DOCUMENT_ID, documentId)
             add(Document.COLUMN_DISPLAY_NAME, item.name)
             add(Document.COLUMN_MIME_TYPE, mime)
             add(Document.COLUMN_SIZE, if (item.isDirectory) null else item.size)
             add(Document.COLUMN_LAST_MODIFIED, item.modified.takeIf { it > 0 })
             add(Document.COLUMN_FLAGS, flags)
+            // A save not uploaded yet: "Uploading…" / "Waiting for network…" / "Upload failed: reason".
+            if (save != null) add(Document.COLUMN_SUMMARY, UploadStatus.summary(save.state == TransferState.WAITING_NETWORK, save.state == TransferState.FAILED, save.error))
         }
     }
 
@@ -283,8 +312,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
         if (documentId == "filen:root" && app.appLock.isLockedForOthers) { c.addRoot(documentId); return c }
         requireSignedIn(doc = documentId)
         if (documentId == "filen:root" || documentId == "filen-in:root") { c.addRoot(documentId); return c }
-        val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
-        c.addItem(item)
+        val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
+        c.addItem(item, documentId) // the id the caller holds, even if the file has a newer version's id now
         return c
     }
 
@@ -349,13 +378,14 @@ class FilenDocumentsProvider : DocumentsProvider() {
         val id = ItemId(documentId)
         if (id.key == "root" || (id.scheme != "filen" && id.scheme != "filen-in")) return@runCatching null
         awaitSession()
-        blocking { app.filen.parentOf(id) }?.value?.also { parents[documentId] = it }
+        blocking { if (id.scheme == "filen") app.filen.currentParent(id) else app.filen.parentOf(id) }?.value?.also { parents[documentId] = it }
     }.getOrNull()
 
     // ---------- reading ----------
 
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
-        pending[documentId]?.let { return openForWrite(it, mode) }
+        val caller = Binder.getCallingUid() // on the binder thread, before anything hops off it
+        pending[documentId]?.let { return openForWrite(it, mode, caller) }
         if (documentId.startsWith(PENDING_PREFIX)) {
             val real = real(documentId)
             if (real == documentId) {
@@ -367,11 +397,66 @@ class FilenDocumentsProvider : DocumentsProvider() {
             return openDocument(real, mode, signal) // uploaded meanwhile: the real document
         }
         requireSignedIn(doc = documentId.takeIf { mode == "r" }) // writes never pass while locked
-        if (mode != "r") throw java.lang.UnsupportedOperationException("Existing Filen files are read-only here")
-        val item = io { blocking(signal) { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
+        val (item, trashed) = current(documentId, signal) ?: throw FileNotFoundException(documentId)
         if (item.isDirectory) throw FileNotFoundException("$documentId is a folder")
+        if (mode != "r") return openSaveOver(documentId, item, trashed, mode, caller, signal)
+        // A save another app made that is not uploaded yet is the newest content: readers get it.
+        item.lineage?.let { app.transfers.pendingSave(it) }?.file?.takeIf { it.isFile }?.let {
+            return ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY)
+        }
         val file = io { blocking(signal) { app.router.materialize(item) } }
+        item.lineage?.let { app.transfers.noteRead(caller, it, item.id.key) } // what a later save by this app builds on
         return ParcelFileDescriptor.open(File(file.path), ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    /**
+     * Writing to an existing Filen file. The app writes a private copy; when it closes it cleanly the copy is queued as
+     * a save ([TransferManager.enqueueSave]), which checks the file again just before uploading and keeps a conflict copy
+     * instead when it can't safely add a version. Needs file versioning, so the replaced content is always kept.
+     */
+    private fun openSaveOver(documentId: String, item: FileItem, trashed: Boolean, mode: String, caller: Int, signal: CancellationSignal?): ParcelFileDescriptor {
+        val lineage = item.lineage
+        if (item.origin != Origin.FILEN_PERSONAL || lineage == null) throw java.lang.UnsupportedOperationException("This file can't be changed here")
+        if (trashed) throw java.lang.UnsupportedOperationException("“${item.name}” is in the Filen trash")
+        val versioning = io { blocking(signal) { app.filen.versioningEnabled() } }
+        if (!versioning) throw java.lang.UnsupportedOperationException(
+            "Saving over Filen files needs file versioning (so the old content is kept). Turn it on in Filen Files, then save again.")
+        val parent = io { blocking(signal) { app.filen.currentParent(item.id) } } ?: throw FileNotFoundException("Couldn't tell which folder “${item.name}” is in")
+        val n = pendingSeq.getAndIncrement()
+        val dir = File(LocalCache.outbox(context!!), "doc-save-${System.nanoTime()}-$n").apply { mkdirs() }
+        val file = File(dir, item.name.replace('/', '_').ifBlank { "file" })
+        try {
+            // Modes that keep content ("rw", "wa") start from the newest content: an unsent save of this file, else Filen's.
+            var before: String? = null
+            var copied: String? = null
+            var copiedFrom: app.filenfiles.transfer.Transfer? = null
+            if ((mode.contains('r') && !mode.contains('t')) || mode.contains('a')) {
+                copiedFrom = app.transfers.pendingSave(lineage)?.takeIf { it.file?.isFile == true }
+                val from = copiedFrom?.file ?: File(io { blocking(signal) { app.router.materialize(item) } }.path).also { copied = item.id.key }
+                from.copyTo(file, overwrite = true)
+                before = sha256(file)
+            }
+            // The version this edit starts from is what the app was given, NOT whatever is current now.
+            val base = app.transfers.baseFor(caller, lineage, copied, copiedFrom)
+            app.transfers.describeWrite(dir, documentId, parent, item.name, item.mime ?: "application/octet-stream", lineage, base, caller)
+            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.parseMode(mode), Handler(writerThread.looper)) { error ->
+                // A failed write is discarded; so is one that changed nothing (an app that opened "rw" just to read).
+                if (error != null || (before != null && runCatching { sha256(file) }.getOrNull() == before)) {
+                    File(dir.path + TransferStore.META).delete(); dir.deleteRecursively(); return@open
+                }
+                app.transfers.enqueueSave(parent, file, item.name, item.mime, lineage, base, caller)
+                parents[documentId]?.let(::notifyParent)
+            }
+        } catch (e: Exception) {
+            File(dir.path + TransferStore.META).delete(); dir.deleteRecursively()
+            throw e
+        }
+    }
+
+    private fun sha256(f: File): String {
+        val d = java.security.MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { i -> val b = ByteArray(1 shl 16); while (true) { val n = i.read(b); if (n < 0) break; d.update(b, 0, n) } }
+        return d.digest().joinToString("") { "%02x".format(it) }
     }
 
     override fun openDocumentThumbnail(documentId: String, sizeHint: Point, signal: CancellationSignal?): AssetFileDescriptor {
@@ -392,21 +477,23 @@ class FilenDocumentsProvider : DocumentsProvider() {
         val w = app.router.writable(parent)?.takeIf { it.canWrite(parent) } ?: throw SecurityException("This folder is read-only")
         if (displayName.isBlank() || '/' in displayName) throw IllegalArgumentException("Invalid name")
         if (mimeType == Document.MIME_TYPE_DIR) {
-            val id = io { blocking { w.createFolder(parent, displayName) } }
+            val id = io { blocking { w.createFolder(parent, FilenNames.sanitize(displayName)) } }
             parents[id.value] = parentDocumentId
             notifyParent(parentDocumentId); return id.value
         }
         val n = pendingSeq.getAndIncrement()
-        val dir = File(LocalCache.dir(context!!, LocalCache.UPLOAD), "doc-${System.nanoTime()}-$n").apply { mkdirs() }
+        val dir = File(LocalCache.outbox(context!!), "doc-${System.nanoTime()}-$n").apply { mkdirs() }
         // Time-based so an id handed out before a process restart can never be reused for a different file.
-        val p = Pending("$PENDING_PREFIX${System.currentTimeMillis()}-$n", parent, displayName.replace('/', '_'), mimeType, dir)
+        // A name Filen would refuse is adjusted now; refusing it after the app has written would strand its save.
+        val p = Pending("$PENDING_PREFIX${System.currentTimeMillis()}-$n", parent, FilenNames.sanitize(displayName), mimeType, dir)
+        app.transfers.describeWrite(dir, p.id, parent, p.name, p.mime)
         pending[p.id] = p
         parents[p.id] = parentDocumentId
         return p.id
     }
 
     /** The writer gets a private temp file; when it closes cleanly the file is handed to the upload queue. */
-    private fun openForWrite(p: Pending, mode: String): ParcelFileDescriptor {
+    private fun openForWrite(p: Pending, mode: String, caller: Int): ParcelFileDescriptor {
         if (!mode.contains('w')) throw FileNotFoundException("Write-only until uploaded")
         if (p.closed) throw java.lang.UnsupportedOperationException("This file was already written")
         val file = File(p.dir, p.name)
@@ -414,7 +501,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
             file, ParcelFileDescriptor.parseMode(mode), Handler(writerThread.looper),
         ) { error ->
             if (error != null) { p.dir.deleteRecursively(); pending.remove(p.id); return@open }
-            p.transferId = app.transfers.enqueueFile(p.parent, file, p.name, p.mime, docId = p.id)
+            p.transferId = app.transfers.enqueueFile(p.parent, file, p.name, p.mime, docId = p.id, writer = caller)
             p.closed = true // order matters: the queued transfer already shows the row, so there is never a moment without it
             pending.remove(p.id) // from here on the persisted transfer is the source of truth for this row
             notifyParent(p.parent.value)
@@ -426,7 +513,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         requireSignedIn(doc = documentId, write = true) // to the Filen trash; while locked only for a GrantFolderActivity app
         pending.remove(documentId)?.let { it.dir.deleteRecursively(); return }
         app.transfers.byDocId(documentId)?.let { t -> app.transfers.cancel(t.id); app.transfers.dismiss(t.id); notifyParent(t.parent.value); return }
-        val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
+        val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be deleted")
         io { blocking { w.trash(item) } } // recoverable: goes to the Filen trash
         app.notifyChanged(); parents.remove(documentId)?.let(::notifyParent)
@@ -435,7 +522,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun renameDocument(documentId: String, displayName: String): String? {
         @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         requireSignedIn()
-        val item = io { blocking { app.router.stat(idOf(documentId)) } } ?: throw FileNotFoundException(documentId)
+        val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be renamed")
         io { blocking { w.rename(item, displayName) } }
         app.notifyChanged(); parents[documentId]?.let(::notifyParent)
@@ -445,7 +532,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun moveDocument(sourceDocumentId: String, sourceParentDocumentId: String, targetParentDocumentId: String): String {
         @Suppress("NAME_SHADOWING") val sourceDocumentId = real(sourceDocumentId)
         requireSignedIn()
-        val item = io { blocking { app.router.stat(idOf(sourceDocumentId)) } } ?: throw FileNotFoundException(sourceDocumentId)
+        val item = current(sourceDocumentId)?.first ?: throw FileNotFoundException(sourceDocumentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be moved")
         val target = idOf(targetParentDocumentId)
         if (app.router.writable(target)?.canWrite(target) != true) throw SecurityException("Target folder is read-only")
