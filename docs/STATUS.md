@@ -3,16 +3,18 @@
 Native Android file manager (Kotlin, Compose, Material 3) on the **official Filen Rust SDK** (`filen-sdk-rs`,
 `uniffi` feature). README.md has setup/build; this file has what a new session needs to keep going.
 
-## 2026-11-25: safe saving and data-loss fixes (committed, NOT released; versionName still 0.4.8)
-- `external/filen-rs` is now `c93cedd` (0.5.35; was `eb93d28`, 0.5.33).
-- In the code: new uploads never replace a same-name file; safer cross-storage moves; Filen Move and Restore refuse
-  taken names; unsent uploads are kept outside the cache; stable file ids and save-over of existing files.
-- 128 unit tests, the debug build and a signed test build passed. The test build is on the TEST phone. Four in-app
-  checks passed there; **save-over and much else is NOT phone-tested** (list in `SAFE_SAVE_PLAN.md`).
-- Opus reviewed and extended the work; its reviewer has not seen the last fix (which version a save is based on).
-  Before a release: another review, the remaining phone tests, and the owner's decision on which apps may save over.
-- Released 0.4.8 still has the older bugs listed in `SAFE_SAVE_PLAN.md`, including Move between phone and cloud storage.
-- Findings: `SAFE_SAVE_INVESTIGATION.md`. When researching, check the latest upstream SDK, `filen-ts` and `filen-docs`.
+## 2026-11-25: 0.4.9 (code 16) - safe saving and data-loss fixes
+- Release notes: `RELEASE_NOTES_0.4.9.md`. SDK filen-rs `c93cedd` (0.5.35). One `.apk` per release now (`Filen-Files.apk`).
+- Before release: 128 unit tests; Opus release-gate review (one possible blocker, folder ids in `currentHead`, fixed; no
+  loss or silent overwrite found in the per-app save base).
+- On the TEST phone with the signed 0.4.9 (installed over a 0.4.8-versioned test build): stayed signed in; after a cold
+  start the system picker listed Filen folders two levels deep and a file there was read; trash + restore; restore and
+  move onto a taken name refused; phone folder with a hidden file moved to Filen. No fatal exceptions.
+- Save-over: the owner's text-editor test (open, Save, Save again) passed on the preceding test build; the only code
+  change since is the folder-id fix.
+- NOT tested: save conflicts, Stack/Ami Pro old ids and lookup, tree grant / locked reader, Filen-to-phone move, resume
+  after a kill, leftover recovery, offline retry, upgrade with a queued upload. Open items: `SAFE_SAVE_PLAN.md`.
+- Save-over is open to any app with a write grant (as built; the owner may still restrict it).
 
 ## Handoff summary (2026-11-22, end of session)
 - **Released:** v0.4.5 (SDK 0.5.33, search filters, quota bar, offline pinning) and v0.4.6 (public links, in-app updater, explicit ascending/descending sort,

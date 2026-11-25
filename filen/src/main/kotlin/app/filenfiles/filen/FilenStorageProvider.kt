@@ -856,6 +856,8 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     suspend fun currentHead(id: ItemId): Head? = io {
         if (id.scheme != P || id.key == ROOT) return@io null
         val row = client.getFileOptional(id.key)
+        // A folder's id is never looked up as a file's whole-life id: how the server answers that is unknown.
+        if (row == null && client.getDirOptional(id.key) != null) return@io null
         // The first version's uuid IS the whole-life id, so an id still resolves after that version's row is gone.
         val head = (if (row != null) headOf(row) else client.getFileByStableUuidOptional(id.key)) ?: return@io null
         Head(personalFileItem(head), head.parent is ParentUuid.Trash)
