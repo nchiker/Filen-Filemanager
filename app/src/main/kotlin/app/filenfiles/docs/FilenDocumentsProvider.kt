@@ -440,6 +440,19 @@ class FilenDocumentsProvider : DocumentsProvider() {
     }
 
     /**
+     * Lets pickers (DocumentsUI's initial location) open a folder directly: the chain of ids from [parentDocumentId] (or the drive
+     * root) to [childDocumentId], from the same parent chain as [isDescendant]. Only for items Filen can confirm; otherwise not found.
+     */
+    override fun findDocumentPath(parentDocumentId: String?, childDocumentId: String): DocumentsContract.Path {
+        val child = real(childDocumentId)
+        // The drive root answers while locked (as queryDocument does), so the picker can show the unlock button there.
+        if (!(child == "filen:root" && app.appLock.isLockedForOthers)) requireSignedIn(doc = child)
+        val ids = DocsRules.documentPath(parentDocumentId, child) { id -> parents[id] ?: pendingParent(id) ?: fetchParent(id) }
+            ?: throw FileNotFoundException("$childDocumentId is not below ${parentDocumentId ?: "a Filen drive"}")
+        return DocumentsContract.Path(if (parentDocumentId == null) ids[0].substringBefore(':') else null, ids)
+    }
+
+    /**
      * Walks up from [documentId] until it meets [parentDocumentId] (true) or a root / unknown item (false). Parents come
      * from listings seen in this process, the upload queue, or - after a cold start - from Filen itself, so a file several
      * levels below a granted folder still resolves. Never checks the lock: callers do.

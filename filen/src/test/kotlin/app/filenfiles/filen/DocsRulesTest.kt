@@ -45,4 +45,27 @@ class DocsRulesTest {
         assertEquals(a, DocsRules.accountId(42u)); assertNotEquals(a, DocsRules.accountId(43u))
         assertEquals(32, a.length); assertFalse(a.contains("42"))
     }
+
+    private val tree = mapOf("filen:f" to "filen:d", "filen:d" to null, "filen-in:x" to null)
+    private fun parentOf(id: String): String? = tree[id]
+
+    @Test fun pathFromRootAndFromParent() {
+        assertEquals(listOf("filen:root", "filen:d", "filen:f"), DocsRules.documentPath(null, "filen:f", ::parentOf))
+        assertEquals(listOf("filen:d", "filen:f"), DocsRules.documentPath("filen:d", "filen:f", ::parentOf))
+        assertEquals(listOf("filen:root", "filen:d"), DocsRules.documentPath("filen:root", "filen:d", ::parentOf))
+        assertEquals(listOf("filen-in:root", "filen-in:x"), DocsRules.documentPath(null, "filen-in:x", ::parentOf))
+    }
+    @Test fun rootResolvesToItself() {
+        assertEquals(listOf("filen:root"), DocsRules.documentPath(null, "filen:root") { error("no lookup") })
+        assertEquals(listOf("filen-out:root"), DocsRules.documentPath("filen-out:root", "filen-out:root") { error("no lookup") })
+    }
+    @Test fun notBelowParentOrUnknownDriveIsNull() {
+        assertNull(DocsRules.documentPath("filen:other", "filen:f", ::parentOf))
+        assertNull(DocsRules.documentPath("filen:root", "filen-in:x", ::parentOf))
+        assertNull(DocsRules.documentPath(null, "evil:a") { null })
+        assertNull(DocsRules.documentPath(null, "filen:loop") { "filen:loop2" }) // too deep
+    }
+    @Test fun unverifiableChainPropagates() {
+        assertFailsWith<java.io.IOException> { DocsRules.documentPath(null, "filen:f") { throw java.io.IOException("offline") } }
+    }
 }

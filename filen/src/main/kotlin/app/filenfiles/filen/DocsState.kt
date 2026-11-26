@@ -282,6 +282,28 @@ class DocsState(
 
 /** I4 F2 / F6: the pure rules behind the documents provider's answers. */
 object DocsRules {
+    private val SCHEMES = setOf("filen", "filen-in", "filen-out")
+
+    /**
+     * The ids from [parent] (or, when null, from the drive root) down to [child], for findDocumentPath. [parentOf] answers the
+     * parent id, null = the item sits at the top of its drive; it may throw when the chain cannot be verified. Null result =
+     * [child] is not below [parent], is in no known drive, or the chain is too deep: the provider answers "not found".
+     */
+    fun documentPath(parent: String?, child: String, parentOf: (String) -> String?): List<String>? {
+        fun scheme(id: String) = id.substringBefore(':')
+        fun isRoot(id: String) = id.substringAfter(':', "") == "root"
+        if (scheme(child) !in SCHEMES) return null
+        val up = ArrayList<String>().apply { add(child) }
+        var cur = child
+        repeat(64) {
+            if (parent != null && cur == parent) return up.reversed()
+            if (isRoot(cur)) return if (parent == null) up.reversed() else null
+            val p = parentOf(cur) ?: (scheme(cur) + ":root")
+            up.add(p); cur = p
+        }
+        return null
+    }
+
     enum class ListOutcome { FRESH, STALE, NOT_FOUND, AUTH, IO }
 
     /**
