@@ -61,4 +61,104 @@ class DocsStateTest {
         val s = state(); s.setParent("x", "y"); s.flush(); assertTrue(file.exists())
         s.clear(); assertFalse(file.exists()); assertNull(state().parent("x"))
     }
+
+    // ---- finding 1: stale links, gone marks ----
+
+    @Test fun freshListingDropsLinksOfChildrenItNoLongerHas() {
+        val s = state()
+        s.putListing("d", listOf(item("filen-in:a"), item("filen-in:b")))
+        s.setParent("filen-in:a", "d"); s.setParent("filen-in:b", "d")
+        s.putListing("d", listOf(item("filen-in:b")))
+        assertNull(s.parent("filen-in:a")); assertEquals("d", s.parent("filen-in:b"))
+    }
+
+    @Test fun aChildListedElsewhereKeepsItsLink() {
+        val s = state()
+        s.putListing("d", listOf(item("filen-in:a"))); s.setParent("filen-in:a", "d")
+        s.putListing("e", listOf(item("filen-in:a")))
+        s.putListing("d", emptyList())
+        assertEquals("d", s.parent("filen-in:a"))
+    }
+
+    @Test fun aLinkPointingAtAnotherFolderIsNotTouched() {
+        val s = state()
+        s.putListing("d", listOf(item("filen-in:a")))
+        s.setParent("filen-in:a", "moved-to") // learned from the new folder's listing
+        s.putListing("d", emptyList())
+        assertEquals("moved-to", s.parent("filen-in:a"))
+    }
+
+    @Test fun goneItemIsNotAnsweredFromTheStoredListing() {
+        val s = state()
+        s.putListing("d", listOf(item("filen-in:a", "old"))); s.setParent("filen-in:a", "d")
+        assertEquals("old", s.storedItem("filen-in:a")?.name)
+        s.markGone("filen-in:a")
+        assertTrue(s.isGone("filen-in:a")); assertNull(s.storedItem("filen-in:a")); assertNull(s.parent("filen-in:a"))
+    }
+
+    @Test fun goneMarkSurvivesAProcessDeathAndClearsWhenSeenAgain() {
+        val a = state(); a.markGone("filen-in:a"); a.flush()
+        val b = state(); assertTrue(b.isGone("filen-in:a"))
+        b.putListing("d", listOf(item("filen-in:a"))) // shared again: a fresh listing has it
+        assertFalse(b.isGone("filen-in:a"))
+        b.markGone("filen-in:x"); b.setParent("filen-in:x", "d"); assertFalse(b.isGone("filen-in:x"))
+    }
+
+    @Test fun goneMarksAreBounded() {
+        val s = DocsState(file, { acct }, autosave = false, maxGone = 3)
+        (1..5).forEach { s.markGone("filen-in:$it") }
+        assertFalse(s.isGone("filen-in:1")); assertFalse(s.isGone("filen-in:2")); assertTrue(s.isGone("filen-in:5"))
+    }
+
+    // ---- finding 2: LRU ----
+
+    @Test fun fullParentMapEvictsTheLeastRecentlyUsedNotTheNewcomer() {
+        val s = DocsState(file, { acct }, autosave = false, maxParents = 3)
+        s.setParent("a", "p"); s.setParent("b", "p"); s.setParent("c", "p")
+        assertEquals("p", s.parent("a")) // a is now recent; b is the oldest
+        s.setParent("d", "p")
+        assertNull(s.parent("b")); assertEquals("p", s.parent("a")); assertEquals("p", s.parent("d"))
+    }
+
+    // ---- finding 7: save ----
+
+    @Test fun overCapListingIsStoredCutAndIncomplete() {
+        val s = DocsState(file, { acct }, autosave = false, maxItems = 3)
+        s.putListing("d", (1..5).map { item("filen-in:$it") }); s.flush()
+        val l = state().let { DocsState(file, { acct }, autosave = false, maxItems = 3) }.listing("d")!!
+        assertEquals(3, l.items.size); assertFalse(l.complete)
+        val small = state(); small.putListing("e", listOf(item("filen-in:1"))); assertTrue(small.listing("e")!!.complete)
+    }
+
+    @Test fun cutListingDoesNotUnlinkItsTruncatedChildren() {
+        val s = DocsState(file, { acct }, autosave = false, maxItems = 2)
+        s.putListing("d", (1..3).map { item("filen-in:$it") }); s.setParent("filen-in:3", "d")
+        s.putListing("d", (1..3).map { item("filen-in:$it") })
+        assertEquals("d", s.parent("filen-in:3"))
+    }
+
+    @Test fun longNamesAreCutForStorageAtACharacterBoundary() {
+        val long = "é".repeat(800) // 1600 bytes
+        val s = state(); s.putListing("d", listOf(item("filen-in:1", long), item("filen-in:2", "😀".repeat(400)))); s.flush()
+        val l = state().listing("d")!!
+        l.items.forEach { assertTrue(it.name.toByteArray().size <= DocsState.MAX_NAME_BYTES); assertTrue(it.name.isNotEmpty()) }
+        assertEquals(500, l.items[0].name.length)
+        assertEquals("short", DocsState.truncateUtf8("short", 1000))
+    }
+
+    @Test fun aBadEntryIsSkippedAndTheRestStillSaves() {
+        val s = state()
+        val hugeId = "filen-in:" + "x".repeat(70_000) // writeUTF cannot hold this
+        s.putListing("d", listOf(item("filen-in:ok", "fine"), item(hugeId, "bad"), item("filen-in:ok2", "fine2")))
+        s.setParent(hugeId, "d"); s.setParent("filen-in:ok", "d")
+        s.flush()
+        val r = state()
+        assertEquals(listOf("fine", "fine2"), r.listing("d")!!.items.map { it.name })
+        assertEquals("d", r.parent("filen-in:ok"))
+    }
+
+    @Test fun clearAfterASnapshotNeverBringsTheFileBack() {
+        val s = state(); s.setParent("x", "y"); s.flush(); s.clear(); s.flush()
+        assertFalse(file.exists())
+    }
 }

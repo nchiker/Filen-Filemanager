@@ -11,6 +11,8 @@ import kotlinx.coroutines.ensureActive
 import java.security.MessageDigest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import uniffi.filen_sdk_rs.SharedRootDirsAndFiles
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import uniffi.filen_sdk_rs.AnyDirWithContext
@@ -68,6 +70,14 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
      * listing of each folder. Nested shared folders resolve cold from this, without the user opening Filen (I4 F1/F2).
      */
     val docState = DocsState(JFile(context.filesDir, "docs-state/state.bin"), { session.accountId })
+    /** The saved partner's address for the signed-in account (set by the app). "Shared by me" for other apps lists only shares with them. */
+    @Volatile var partnerEmail: () -> String? = { null }
+    /** A full top-down search for one id runs at most once per 10 minutes; see [CrawlGuard]. */
+    private val crawlGuard = CrawlGuard()
+    /** Guards only the in-flight table (never held across a network call). */
+    private val registryLock = Any()
+    private val inflight = HashMap<String, kotlinx.coroutines.CompletableDeferred<Boolean>>()
+    private val crawlSlots = kotlinx.coroutines.sync.Semaphore(2)
     /** Opaque stable id of the signed-in account (I4 F6); null when signed out. */
     val accountId: String? get() = if (session.isSignedIn) session.accountId else null
     /** child ItemId -> parent folder ItemId, kept in [docState]. */
@@ -231,17 +241,31 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         return out
     }
 
-    private suspend fun listShared(folder: ItemId): Listing {
+    /** What other apps see: the "Shared by me" root lists only items shared with the saved partner (I4 F4); nothing without one. */
+    suspend fun listForProvider(folder: ItemId): Listing = io {
+        if (folder.scheme == P) listPersonal(folder) else listShared(folder, partnerOnly = true)
+    }
+
+    private suspend fun listShared(folder: ItemId, partnerOnly: Boolean = false): Listing {
         val scheme = folder.scheme
         if (folder.key == ROOT) {
-            val res = timed("sharedRoot($scheme)") { if (scheme == IN) client.listInSharedRoot() else client.listOutShared(null) }
+            val res = timed("sharedRoot($scheme)") {
+                if (scheme == IN) client.listInSharedRoot()
+                else if (!partnerOnly) client.listOutShared(null)
+                else {
+                    val all = client.getContacts()
+                    val contact = Partner.contactFor(partnerEmail(), all.map { Person(it.email, null) })
+                        ?.let { p -> all.firstOrNull { it.email == p.email } }
+                    if (contact == null) SharedRootDirsAndFiles(emptyList(), emptyList()) else client.listOutShared(contact)
+                }
+            }
             var items = res.dirs.map { d ->
                 sharedDirItem(AnySharedDir.Root(d), d.inner.uuid, d.inner.meta, d.inner.timestamp, d.sharingRole,
                     d.writeAccess, scheme, "$scheme:$ROOT")
             } + res.files.map { f ->
                 sharedFileItem(AnyFile.Shared(f), f.uuid, f.size, f.timestamp, f.meta, f.sharingRole, false, scheme, "$scheme:$ROOT")
             }
-            if (scheme == OUT) {
+            if (scheme == OUT && !partnerOnly) {
                 // One folder shared with several people comes back once per recipient: show it once (recipients
                 // joined) so list keys stay unique, and remember every underlying share so it can be revoked.
                 outRoots.clear()
@@ -287,40 +311,76 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
     }
 
-    private val findLock = Mutex()
     private fun registered(id: ItemId) = sharedDirs[id.value] != null || sharedFiles[id.value] != null
 
     /**
      * Makes sure the shared item [target] is registered (so it can be listed or opened) after a process restart.
      * First the remembered chain of parents is re-listed; if that does not find it (the chain is unknown or stale),
-     * the shares are searched top-down from the root, listing folders until the item turns up. The SDK has no call
+     * the shares are searched top-down from the root, listing folders until the item turns up (bounded in folders and
+     * wall time, at most once per 10 minutes per id, one search at a time per id: see [crawl]). The SDK has no call
      * that asks the server for a received item's parent (get-by-uuid only knows the own drive), so this is the
      * server lookup. Returns true when found. Returns false ONLY after every folder was listed from the server without
      * error and the item is not in any of them (the share is gone); anything else (offline, a failing folder, too
-     * many folders) throws, which callers report as "unknown".
+     * many folders, out of time) throws, which callers report as "unknown".
      */
     private suspend fun ensureShared(target: ItemId): Boolean {
         if (registered(target)) return true
-        findLock.withLock {
-            if (registered(target)) return true
-            try { resolveShared(target) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* chain stale: search below */ }
-            if (registered(target)) return true
-            val rootId = ItemId("${target.scheme}:$ROOT")
-            val queue = ArrayDeque<ItemId>().apply { add(rootId) }
-            var listed = 0
-            while (queue.isNotEmpty()) {
-                if (++listed > MAX_SEARCH_FOLDERS) throw java.io.IOException("Too many shared folders to search")
-                val l = listShared(queue.removeFirst())
-                if (registered(target)) return true
-                l.items.filter { it.isDirectory }.forEach { queue.add(it.id) }
+        while (true) {
+            // The table is only touched under the lock; the network work below runs outside it.
+            val mine = kotlinx.coroutines.CompletableDeferred<Boolean>()
+            val other = synchronized(registryLock) { inflight[target.value] ?: run { inflight[target.value] = mine; null } }
+            if (other != null) {
+                try { return other.await() } catch (e: kotlinx.coroutines.CancellationException) {
+                    // The searcher was cancelled, not this caller: look again (or become the searcher).
+                    kotlin.coroutines.coroutineContext.ensureActive(); continue
+                }
             }
-            return false
+            try {
+                val r = findShared(target)
+                mine.complete(r); return r
+            } catch (e: Throwable) {
+                mine.completeExceptionally(e); throw e
+            } finally { synchronized(registryLock) { if (inflight[target.value] === mine) inflight.remove(target.value) } }
+        }
+    }
+
+    private suspend fun findShared(target: ItemId): Boolean {
+        if (registered(target)) return true
+        try { resolveShared(target) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* chain stale: search below */ }
+        if (registered(target)) return true
+        return crawl(target) != null
+    }
+
+    /**
+     * The full top-down search for [target]. Returns the folder whose listing holds it, null when every folder was
+     * listed from the server and it is in none; throws [java.io.IOException] when it could not be finished or was
+     * searched too recently (the answer then is "cannot tell", never "gone").
+     */
+    private suspend fun crawl(target: ItemId): String? {
+        when (crawlGuard.recent(target.value)) {
+            CrawlGuard.Outcome.NOT_FOUND -> return null
+            CrawlGuard.Outcome.INCOMPLETE -> throw java.io.IOException("Searched a moment ago without finishing; try again later")
+            null -> {}
+        }
+        val rootId = "${target.scheme}:$ROOT"
+        return crawlSlots.withPermit {
+            val r = SharedCrawl.search(rootId, target.value, MAX_SEARCH_FOLDERS, MAX_SEARCH_MS) { f ->
+                listShared(ItemId(f), partnerOnly = true).items.map { SharedCrawl.Child(it.id.value, it.isDirectory) }
+            }
+            when (r) {
+                is SharedCrawl.Result.Found -> { crawlGuard.forget(target.value); r.parent }
+                SharedCrawl.Result.NotFound -> { crawlGuard.note(target.value, CrawlGuard.Outcome.NOT_FOUND); null }
+                SharedCrawl.Result.Incomplete -> {
+                    crawlGuard.note(target.value, CrawlGuard.Outcome.INCOMPLETE)
+                    throw java.io.IOException("Too many shared folders to search")
+                }
+            }
         }
     }
 
     /** Like [stat] for a shared item, but throws when it cannot be told; null only when the share is confirmed gone. */
     suspend fun statShared(id: ItemId): FileItem? = io {
-        if (!ensureShared(id)) return@io null
+        if (!ensureShared(id)) { docState.markGone(id.value); return@io null } // the server confirmed: no longer there / shared
         sharedFiles[id.value]?.item ?: sharedDirs[id.value]?.let { n ->
             FileItem(id, n.name, true, 0, 0, null, originOf(n.scheme), if (n.write) Permission.READ_WRITE else Permission.READ_ONLY)
         }
@@ -345,8 +405,31 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             return@io ParentLookup.Found(ItemId(pid))
         }
         sharedParents[id.value]?.let { return@io ParentLookup.Found(ItemId(it)) }
-        if (!ensureShared(id)) return@io ParentLookup.Gone
+        if (!ensureShared(id)) { docState.markGone(id.value); return@io ParentLookup.Gone }
         sharedParents[id.value]?.let { ParentLookup.Found(ItemId(it)) } ?: ParentLookup.Gone
+    }
+
+    /**
+     * Like [parentLookup], but never from the stored map: the parent chain is confirmed by Filen now. For the own drive
+     * that is the lookup itself. For a shared item, the claimed parent is listed from the server and must contain the
+     * item; if it does not (a stale link), the link is dropped and the shares are searched (bounded, see [crawl]).
+     * Throws when it cannot be told (offline); [ParentLookup.Gone] only when the server confirms.
+     */
+    suspend fun verifiedParent(id: ItemId): ParentLookup = io {
+        if (id.key == ROOT) return@io ParentLookup.Top
+        if (id.scheme == P) return@io parentLookup(id)
+        val claimed = docState.parent(id.value)
+        if (claimed != null) {
+            val listed = try {
+                listShared(ItemId(claimed), partnerOnly = true).items.any { it.id == id }
+            } catch (_: java.io.FileNotFoundException) { false } // the claimed parent is no longer shared
+            if (listed) return@io ParentLookup.Found(ItemId(claimed))
+            docState.removeParent(id.value)
+        }
+        val parent = crawl(id)
+        if (parent == null) { docState.markGone(id.value); return@io ParentLookup.Gone }
+        sharedParents[id.value] = parent
+        ParentLookup.Found(ItemId(parent))
     }
 
     private fun rootTitle(scheme: String) = if (scheme == IN) "Shared with me" else "Shared by me"
@@ -522,22 +605,32 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         ShareAnswer.Known(false, via)
     }
 
-    /**
-     * I4 F11: the folder [name] in the drive root that is shared with [email]: an existing one that is already shared with
-     * them, else a new one (named [name], or "[name] 2"... when a folder of that name exists that is not shared with them:
-     * an existing private folder is never shared by this call). Returns its id and name.
-     */
-    suspend fun ensureSharedFolder(name: String, email: String): Pair<ItemId, String> = io {
+    /** What F11 would do for [name] and [email]; [recorded] is the uuid of the folder F11 made earlier for this caller (see [FolderReuse]). */
+    suspend fun planSharedFolder(name: String, email: String, recorded: String?): FolderPlan = io {
         val contact = client.getContacts().firstOrNull { it.email.equals(email.trim(), true) } ?: error("That person is not a contact yet")
-        val rootAny = AnyNormalDir.Root(client.root())
-        val dirs = client.listDir(rootAny).dirs.map { personalDirItem(it) }
+        val dirs = client.listDir(AnyNormalDir.Root(client.root())).dirs.map { personalDirItem(it) }
         val sharedIds = client.listOutShared(contact).dirs.map { it.inner.uuid }.toSet()
-        dirs.firstOrNull { it.name.equals(name, true) && it.id.key in sharedIds }?.let { return@io it.id to it.name }
-        val use = FolderNames.unique(name, dirs.map { it.name })
-        val id = createFolder(ItemId("$P:$ROOT"), use)
-        outShareCache.clear()
-        sharePartner(id, email, false)
-        id to use
+        FolderReuse.plan(name, recorded, dirs.map { it.id.key to it.name }, sharedIds)
+    }
+
+    class SharedFolder(val id: ItemId, val name: String, val created: Boolean)
+
+    /**
+     * I4 F11: the folder in the drive root shared with [email]. Only a folder this caller's earlier F11 call created
+     * ([recorded]) is reused, and only while it is still in the drive root and shared with them; anything else, including
+     * an existing folder that merely has the same name, gets a new folder ("[name] 2"... when the name is taken). An
+     * existing private folder is never shared by this call.
+     */
+    suspend fun ensureSharedFolder(name: String, email: String, recorded: String?): SharedFolder = io {
+        when (val plan = planSharedFolder(name, email, recorded)) {
+            is FolderPlan.Reuse -> SharedFolder(ItemId("$P:${plan.uuid}"), plan.name, false)
+            is FolderPlan.Create -> {
+                val id = createFolder(ItemId("$P:$ROOT"), plan.name)
+                outShareCache.clear()
+                sharePartner(id, email, false)
+                SharedFolder(id, plan.name, true)
+            }
+        }
     }
 
     /**
@@ -802,7 +895,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
         loadedAccount = null; rootCache = null
         listOf(dirCache, personalFiles, personalDirObjs, sharedDirs, sharedFiles, trashedFiles, trashedDirs, outRoots, contactMap).forEach { it.clear() }
-        docState.clear(); outShareCache.clear()
+        docState.clear(); outShareCache.clear(); crawlGuard.clear()
         indexFile().delete()
         pins.wipe()
     }
@@ -1380,6 +1473,8 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         private const val SHARED_CRAWL_BUDGET = 3000
         private const val SHARED_CRAWL_MAX_MS = 120_000L
         private const val MAX_SEARCH_FOLDERS = 400
+        /** Wall time cap of one top-down search for a shared item. */
+        private const val MAX_SEARCH_MS = 20_000L
         private const val SEARCH_WAIT_MS = 5_000L
     }
 }
