@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
@@ -20,6 +21,7 @@ import app.filenfiles.docs.FilenDocumentsProvider
 import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.FilenStorageProvider
+import app.filenfiles.filen.FolderPlan
 import app.filenfiles.filen.Partner
 import app.filenfiles.filen.PartnerState
 import app.filenfiles.filen.Person
@@ -61,6 +63,7 @@ abstract class PartnerActivity : FragmentActivity() {
         callerLabel = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(caller, 0)).toString() }.getOrDefault(caller)
         if (!prepare()) return
         setFinishOnTouchOutside(false)
+        window.decorView.filterTouchesWhenObscured = true // tapjacking: no touches while another window covers this one
         setContent {
             LaunchedEffect(Unit) {
                 repeat(200) { if (app.session.state.value !is FilenSession.State.Unknown) return@repeat; delay(50) }
@@ -68,13 +71,14 @@ abstract class PartnerActivity : FragmentActivity() {
             }
             FilesTheme(androidx.compose.foundation.isSystemInDarkTheme()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    TapGuard()
                     if (app.appLock.isLocked) { LockScreen(app, this@PartnerActivity); return@Box }
                     when (ready) {
                         null -> CircularProgressIndicator()
                         false -> AlertDialog(
                             onDismissRequest = { cancel("not_signed_in") },
                             title = { Text("Sign in to Filen first") },
-                            text = { Text("Open Filen Files and sign in, then try again.") },
+                            text = { Column { TapGuard(); Text("Open Filen Files and sign in, then try again.") } },
                             confirmButton = { TextButton({ cancel("not_signed_in") }) { Text("OK") } },
                         )
                         true -> Content()
@@ -105,8 +109,23 @@ abstract class PartnerActivity : FragmentActivity() {
     }
 }
 
-/** What the partner screen found out; [state] is CONNECTED or REQUESTED. */
-private class PartnerDone(val state: PartnerState, val name: String, val email: String)
+/**
+ * What the partner screen found out; [state] is CONNECTED or REQUESTED. [name] is the cleaned nickname only (what other
+ * apps get); [label] is "nick (email)" and is what every sheet of ours shows, so a nickname can never pass for someone else.
+ */
+private class PartnerDone(val state: PartnerState, val name: String, val email: String, val label: String)
+
+private fun doneFor(state: PartnerState, p: Person) = PartnerDone(state, Partner.displayName(p), p.email, Partner.label(p))
+
+/**
+ * Touches are dropped while another window covers this one (tapjacking). Put once in the content of every dialog and
+ * activity: the dialog's own window is a separate window, so it needs its own.
+ */
+@Composable
+internal fun TapGuard() {
+    val v = LocalView.current
+    SideEffect { v.filterTouchesWhenObscured = true; v.rootView.filterTouchesWhenObscured = true }
+}
 
 /**
  * One screen: accept the partner's request, or enter their email to send one. Calls [onDone] with the result (the
@@ -124,7 +143,7 @@ private fun PartnerSetup(app: FilesApp, onDone: (PartnerDone) -> Unit, onCancel:
 
     fun finish(state: PartnerState, mail: String, nick: String?) {
         app.prefs.setPartner(account, mail)
-        onDone(PartnerDone(state, Partner.displayName(Person(mail, nick)), mail))
+        onDone(doneFor(state, Person(mail, nick)))
     }
     fun run(block: suspend () -> Unit) {
         busy = true; error = null
@@ -137,7 +156,7 @@ private fun PartnerSetup(app: FilesApp, onDone: (PartnerDone) -> Unit, onCancel:
             val lists = withContext(Dispatchers.IO) { app.filen.partnerLists() }
             val saved = app.prefs.partnerFor(account)
             val have = saved?.let { s -> lists.contacts.firstOrNull { it.email.equals(s, true) } }
-            if (have != null) { onDone(PartnerDone(PartnerState.CONNECTED, Partner.displayName(have), have.email)); return@LaunchedEffect }
+            if (have != null) { onDone(doneFor(PartnerState.CONNECTED, have)); return@LaunchedEffect }
             incoming = lists.incoming
         } catch (e: CancellationException) { throw e } catch (e: Throwable) { error = onFail(e) }
         loading = false
@@ -148,14 +167,12 @@ private fun PartnerSetup(app: FilesApp, onDone: (PartnerDone) -> Unit, onCancel:
         title = { Text("Add your partner") },
         text = {
             Column {
+                TapGuard()
                 if (incoming.isNotEmpty()) {
                     Text("Asked to connect:")
                     incoming.forEach { r ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(r.email, Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            TextButton(enabled = !busy, onClick = { run { withContext(Dispatchers.IO) { app.filen.acceptRequest(r) }; finish(PartnerState.CONNECTED, r.email, r.nick) } }) {
-                                Text("Accept ${Partner.displayName(r.person)}", maxLines = 1)
-                            }
+                        TextButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { run { withContext(Dispatchers.IO) { app.filen.acceptRequest(r) }; finish(PartnerState.CONNECTED, r.email, r.nick) } }) {
+                            Text("Accept ${Partner.label(r.person)}", maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -193,8 +210,11 @@ class PartnerSetupActivity : PartnerActivity() {
             onDismissRequest = { if (!granting) cancel("user_cancelled") },
             title = { Text("Let $callerLabel read shared files?") },
             text = {
-                Text((if (d.state == PartnerState.REQUESTED) "Request sent to ${d.email}. " else "") +
-                    "$callerLabel can read what you share and what is shared with you, even when Filen Files is locked. It cannot change anything.")
+                Column {
+                    TapGuard()
+                    Text((if (d.state == PartnerState.REQUESTED) "Request sent to ${d.label}. " else "Your partner: ${d.label}. ") +
+                        "$callerLabel can read what you share and what is shared with you, even when Filen Files is locked. It cannot change anything.")
+                }
             },
             confirmButton = { TextButton(enabled = !granting, onClick = { granting = true; grant(d) }) { Text("Allow") } },
             dismissButton = { TextButton(enabled = !granting, onClick = { cancel("user_cancelled") }) { Text("Cancel") } },
@@ -256,12 +276,12 @@ class SharePartnerActivity : PartnerActivity() {
         val name = itemName ?: return
         val p = partner
         if (needSetup || p == null) {
-            if (needSetup) { PartnerSetup(app, { partner = it; needSetup = false; message = if (it.state == PartnerState.REQUESTED) "Waiting for ${it.name} to accept. Try again then." else null },
+            if (needSetup) { PartnerSetup(app, { partner = it; needSetup = false; message = if (it.state == PartnerState.REQUESTED) "Waiting for ${it.label} to accept. Try again then." else null },
                 { needSetup = false }, ::failMessage); return }
             AlertDialog(
                 onDismissRequest = { cancel("user_cancelled") },
                 title = { Text("Add a partner first") },
-                text = { Text("Share files with one person you trust.") },
+                text = { Column { TapGuard(); Text("Share files with one person you trust.") } },
                 confirmButton = { TextButton({ needSetup = true }) { Text("Add partner") } },
                 dismissButton = { TextButton({ cancel("user_cancelled") }) { Text("Cancel") } },
             )
@@ -269,12 +289,13 @@ class SharePartnerActivity : PartnerActivity() {
         }
         AlertDialog(
             onDismissRequest = { if (!busy) cancel("user_cancelled") },
-            title = { Text(if (stop) "Stop sharing with ${p.name}?" else "Share with ${p.name}?") },
+            title = { Text(if (stop) "Stop sharing with ${p.label}?" else "Share with ${p.label}?") },
             text = {
                 Column {
-                    Text(if (stop) "${p.name} can no longer open “$name”."
-                        else if (isDir) "${p.name} can open “$name” and everything in it. You can stop later."
-                        else "${p.name} can open “$name”. You can stop later.")
+                    TapGuard()
+                    Text(if (stop) "${p.label} can no longer open “$name”."
+                        else if (isDir) "${p.label} can open “$name” and everything in it. You can stop later."
+                        else "${p.label} can open “$name”. You can stop later.")
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
                 }
             },
@@ -297,9 +318,9 @@ class SharePartnerActivity : PartnerActivity() {
             if (saved != null) {
                 val st = withContext(Dispatchers.IO) { app.filen.partnerStatus(saved) }
                 val who = st.who
-                if (who != null && st.state != PartnerState.NONE) partner = PartnerDone(
-                    if (st.state == PartnerState.CONNECTED) PartnerState.CONNECTED else PartnerState.REQUESTED, Partner.displayName(who), who.email)
-                if (partner?.state == PartnerState.REQUESTED) message = "Waiting for ${partner!!.name} to accept. Try again then."
+                if (who != null && st.state != PartnerState.NONE) partner = doneFor(
+                    if (st.state == PartnerState.CONNECTED) PartnerState.CONNECTED else PartnerState.REQUESTED, who)
+                if (partner?.state == PartnerState.REQUESTED) message = "Waiting for ${partner!!.label} to accept. Try again then."
             }
             loaded = true
         } catch (e: CancellationException) { throw e } catch (e: Throwable) {
@@ -333,6 +354,8 @@ class SharePartnerActivity : PartnerActivity() {
  */
 class CreateSharedFolderActivity : PartnerActivity() {
     private var folderName = "Scans"
+    /** What the confirm sheet promises: use the folder this app's earlier call made, or create one (maybe "[name] 2"). */
+    private var plan by mutableStateOf<FolderPlan?>(null)
     private var partner by mutableStateOf<PartnerDone?>(null)
     private var needSetup by mutableStateOf(false)
     private var loaded by mutableStateOf(false)
@@ -349,12 +372,13 @@ class CreateSharedFolderActivity : PartnerActivity() {
         if (!loaded) { CircularProgressIndicator(); return }
         val p = partner
         if (needSetup || p == null) {
-            if (needSetup) { PartnerSetup(app, { partner = it; needSetup = false; message = if (it.state == PartnerState.REQUESTED) "Waiting for ${it.name} to accept. Try again then." else null },
+            if (needSetup) { PartnerSetup(app, { partner = it; needSetup = false; message = if (it.state == PartnerState.REQUESTED) "Waiting for ${it.label} to accept. Try again then." else null
+                lifecycleScope.launch { try { refreshPlan() } catch (e: CancellationException) { throw e } catch (e: Throwable) { message = failMessage(e) } } },
                 { cancel("user_cancelled") }, ::failMessage); return }
             AlertDialog(
                 onDismissRequest = { cancel("user_cancelled") },
                 title = { Text("Add a partner first") },
-                text = { Text("Share files with one person you trust.") },
+                text = { Column { TapGuard(); Text("Share files with one person you trust.") } },
                 confirmButton = { TextButton({ needSetup = true }) { Text("Add partner") } },
                 dismissButton = { TextButton({ cancel("user_cancelled") }) { Text("Cancel") } },
             )
@@ -362,14 +386,22 @@ class CreateSharedFolderActivity : PartnerActivity() {
         }
         AlertDialog(
             onDismissRequest = { if (!busy) cancel("user_cancelled") },
-            title = { Text("Create “$folderName” and share it with ${p.name}?") },
+            title = {
+                Text(when (val pl = plan) {
+                    is FolderPlan.Reuse -> "Use your shared folder “${pl.name}”?"
+                    is FolderPlan.Create -> "Create “${pl.name}” in your Filen and share it with ${p.label}?"
+                    null -> "Share a folder with ${p.label}?"
+                })
+            },
             text = {
                 Column {
-                    Text("$callerLabel can add files to it, even when Filen Files is locked. ${p.name} can open them.")
+                    TapGuard()
+                    Text((if (plan is FolderPlan.Reuse) "It is already shared with ${p.label}. " else "") +
+                        "$callerLabel can add files to it, even when Filen Files is locked. ${p.label} can open them.")
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
                 }
             },
-            confirmButton = { TextButton(enabled = !busy && p.state == PartnerState.CONNECTED, onClick = { go(p) }) { Text(if (busy) "Please wait…" else "Create and share") } },
+            confirmButton = { TextButton(enabled = !busy && p.state == PartnerState.CONNECTED && plan != null, onClick = { go(p) }) { Text(if (busy) "Please wait…" else if (plan is FolderPlan.Reuse) "Use it" else "Create and share") } },
             dismissButton = { TextButton(enabled = !busy, onClick = { cancel("user_cancelled") }) { Text("Cancel") } },
         )
     }
@@ -380,21 +412,32 @@ class CreateSharedFolderActivity : PartnerActivity() {
             if (saved != null) {
                 val st = withContext(Dispatchers.IO) { app.filen.partnerStatus(saved) }
                 val who = st.who
-                if (who != null && st.state != PartnerState.NONE) partner = PartnerDone(
-                    if (st.state == PartnerState.CONNECTED) PartnerState.CONNECTED else PartnerState.REQUESTED, Partner.displayName(who), who.email)
-                if (partner?.state == PartnerState.REQUESTED) message = "Waiting for ${partner!!.name} to accept. Try again then."
+                if (who != null && st.state != PartnerState.NONE) partner = doneFor(
+                    if (st.state == PartnerState.CONNECTED) PartnerState.CONNECTED else PartnerState.REQUESTED, who)
+                if (partner?.state == PartnerState.REQUESTED) message = "Waiting for ${partner!!.label} to accept. Try again then."
             }
+            refreshPlan()
             loaded = true
         } catch (e: CancellationException) { throw e } catch (e: Throwable) {
             cancel(if (e.failureKind() == FailureKind.NETWORK) "offline" else "failed", failMessage(e))
         }
     }
 
+    private fun recorded() = app.prefs.f11Folder(callerPkg, app.filen.accountId)
+
+    /** Decides reuse or create now, so the sheet says what will really happen. Needs a connected partner. */
+    private suspend fun refreshPlan() {
+        val p = partner?.takeIf { it.state == PartnerState.CONNECTED } ?: return
+        plan = withContext(Dispatchers.IO) { app.filen.planSharedFolder(folderName, p.email, recorded()) }
+    }
+
     private fun go(p: PartnerDone) {
         busy = true; message = null
         lifecycleScope.launch {
             try {
-                val (id, name) = withContext(Dispatchers.IO) { app.filen.ensureSharedFolder(folderName, p.email) }
+                val made = withContext(Dispatchers.IO) { app.filen.ensureSharedFolder(folderName, p.email, recorded()) }
+                val id = made.id; val name = made.name
+                if (made.created) app.prefs.setF11Folder(callerPkg, app.filen.accountId, id.key) // only this folder is ever reused
                 app.docsChanged(ItemId("filen:root")); app.notifyChanged()
                 runCatching { contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, "filen-out:root"), null) }
                 app.prefs.grantBackupWriter(callerPkg, callerLabel)
