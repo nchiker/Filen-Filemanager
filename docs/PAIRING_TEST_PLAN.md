@@ -1,3 +1,7 @@
+> **SUPERSEDED (2026-11-26).** The pairing flow below (QR, `GRANT_SHARE_FOLDER`, `GRANT_RECEIVED_FOLDER`, `-PpairingEnabled`) was replaced by
+> the partner screens and the shared-folder reads of the folder-sharing design: see `~/Projects/Stack/docs/FOLDER_SHARING_INTERFACES.md`
+> (I4 F1-F10), `FOLDER_SHARING_DESIGN.md` and `FOLDER_SHARING_PHASE0.md` (device results). The code and the flag are removed. Kept for history only.
+
 # Two-account test plan: partner pairing, OPEN_SHARED and the change notice (for 0.4.8)
 
 Pairing (`account`, GRANT_RECEIVED_FOLDER, GRANT_SHARE_FOLDER) is built but OFF in 0.4.7. Build the test APK with `-PpairingEnabled=true` and, for a Stack checks build,

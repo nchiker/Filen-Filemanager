@@ -493,11 +493,33 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         Contacted.REQUESTED
     }
 
+    private val outShareCache = OutShareCache()
+
+    /**
+     * I4 F10: is the item [uuid] of the own drive shared with the partner [savedEmail]? Throws when it cannot be told
+     * (offline); [ShareAnswer.NotFound] only when Filen says the item is not in the drive or is in the trash.
+     */
+    suspend fun shareState(uuid: String, savedEmail: String?): ShareAnswer = io {
+        val file = client.getFileOptional(uuid)?.let { headOf(it) ?: return@io ShareAnswer.NotFound }
+        val dir = if (file == null) client.getDirOptional(uuid) else null
+        val parent = (file?.parent ?: dir?.parent) ?: return@io ShareAnswer.NotFound
+        if (parent !is ParentUuid.Uuid) return@io ShareAnswer.NotFound
+        val id = file?.uuid ?: uuid
+        if (savedEmail == null) return@io ShareAnswer.Known(false)
+        val ids = outShareCache.get(savedEmail) ?: run {
+            val contact = client.getContacts().firstOrNull { it.email.equals(savedEmail.trim(), true) } ?: return@io ShareAnswer.Known(false)
+            val out = client.listOutShared(contact)
+            (out.dirs.map { it.inner.uuid } + out.files.map { it.uuid }).map(String::lowercase).toSet().also { outShareCache.put(savedEmail, it) }
+        }
+        ShareAnswer.Known(ShareRules.isShared(id, ids))
+    }
+
     /**
      * Shares the personal file or folder [id] with the contact [email] (once), or with [stop] stops sharing it with them.
      * Returns whether it is shared with them afterwards. The partner must already be a contact.
      */
     suspend fun sharePartner(id: ItemId, email: String, stop: Boolean): Boolean = io {
+        outShareCache.clear()
         require(id.scheme == P && id.key != ROOT) { "Only an item in your own drive can be shared" }
         val contact = client.getContacts().firstOrNull { it.email.equals(email.trim(), true) } ?: error("That person is not a contact yet")
         val out = client.listOutShared(contact)
@@ -754,7 +776,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
         loadedAccount = null; rootCache = null
         listOf(dirCache, personalFiles, personalDirObjs, sharedDirs, sharedFiles, trashedFiles, trashedDirs, outRoots, contactMap).forEach { it.clear() }
-        docState.clear()
+        docState.clear(); outShareCache.clear()
         indexFile().delete()
         pins.wipe()
     }

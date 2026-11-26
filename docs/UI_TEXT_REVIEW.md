@@ -2,6 +2,11 @@
 
 Rules: title 6 words or fewer; body at most 2 short sentences (~25 words), one idea; specific button verbs; no internal words (grant, tree, URI, UUID, provider, pinned); warnings state the consequence once; the full partner email and the code match stay on the sharing dialogs.
 
+> **Update 2026-11-26:** the rows marked (pairing) below describe dialogs that were removed (superseded by the folder-sharing design,
+> `~/Projects/Stack/docs/FOLDER_SHARING_INTERFACES.md`). Current partner texts (`PartnerActivities.kt`), same rules:
+> "Add your partner" / "Accept [name]" / "Send request"; "Let [app] read shared files?"; "Share with [name]?" / "Stop sharing with [name]?";
+> "Add a partner first". Rules above still apply to everything else.
+
 | Where | Before | After |
 |---|---|---|
 | Sign-in dialog (pairing) | Open Filen Files and sign in, then try again from $callerLabel. | Open Filen Files and sign in, then try again. |
