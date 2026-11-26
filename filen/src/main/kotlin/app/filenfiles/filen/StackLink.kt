@@ -31,7 +31,8 @@ object StackLink {
 
     /** True when [uid] belongs to exactly one package and that package + its one signing certificate are pinned. */
     fun callerAllowed(context: Context, uid: Int): Boolean {
-        val pkg = context.packageManager.getPackagesForUid(uid)?.singleOrNull() ?: return false
+        // A caller from another Android user (the shell, a work profile) makes this throw: not pinned, so refused.
+        val pkg = try { context.packageManager.getPackagesForUid(uid)?.singleOrNull() } catch (_: SecurityException) { null } ?: return false
         if (testPackage.isNotEmpty() && pkg == testPackage) return true // TEST ONLY build flag, empty in shipped builds
         return certMatches(context, pkg)
     }
