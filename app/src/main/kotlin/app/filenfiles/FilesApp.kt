@@ -54,6 +54,23 @@ class FilesApp : Application() {
     lateinit var transfers: TransferManager; private set
 
     /**
+     * Sign-out or a different account (docs/STATUS.md): the persisted folder grants Filen handed out (the roots and the
+     * shared scan folders, to the pinned apps) are revoked, and the "allowed while locked" lists are cleared. The apps
+     * ask again after the next partner setup.
+     */
+    private fun resetAccess() {
+        val uris = HashSet<android.net.Uri>()
+        contentResolver.outgoingPersistedUriPermissions.filter { it.uri.authority == app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY }.forEach { uris.add(it.uri) }
+        listOf("filen:root", "filen-in:root", "filen-out:root").forEach {
+            uris.add(android.provider.DocumentsContract.buildTreeDocumentUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY, it))
+        }
+        val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+            android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        for (pkg in app.filenfiles.filen.StackLink.pinnedPackages()) for (u in uris) runCatching { revokeUriPermission(pkg, u, flags) }
+        prefs.clearLockedAccess()
+    }
+
+    /**
      * Last listing per folder, in memory only: re-entering a folder shows it immediately while the fresh one loads
      * (cold Filen listings take seconds). Bounded LRU; dropped on sign-out/expiry.
      */
@@ -136,6 +153,8 @@ class FilesApp : Application() {
     override fun onCreate() {
         super.onCreate()
         app.filenfiles.filen.StackLink.testPackage = BuildConfig.STACK_TEST_PACKAGE
+        // Once per process: a build that trusts a test package as a caller must never be mistaken for a shipped one.
+        if (BuildConfig.STACK_TEST_PACKAGE.isNotEmpty()) android.util.Log.w("FilenTestPin", "TEST BUILD: ${BuildConfig.STACK_TEST_PACKAGE} is accepted as a caller (certificate not pinned). Never release this build.")
         session = FilenSession(this)
         local = LocalStorageProvider(this)
         filen = FilenStorageProvider(this, session)
@@ -143,6 +162,7 @@ class FilesApp : Application() {
         router = StorageRouter(listOf(filen, local, saf))
         prefs = Prefs(this)
         appLock = AppLock(prefs)
+        filen.partnerEmail = { prefs.partnerFor(filen.accountId) } // "Shared by me" for other apps lists only shares with this partner
         // The remembered "update available" answer is only refreshed daily: once this build has caught up with it
         // (the user installed the update), the notice must go away immediately instead of lingering until the next check.
         prefs.updateVersion?.let { if (!app.filenfiles.core.Versions.isNewer(it, installedVersion)) prefs.setAvailableUpdate(null, null) }
@@ -164,6 +184,13 @@ class FilesApp : Application() {
                     is FilenSession.State.LoggedIn -> { transfers.resume(); PinSyncWorker.schedule(this@FilesApp); app.filenfiles.stacklink.SharedWatcher.apply { schedule(this@FilesApp); startListening(this@FilesApp) } }
                     is FilenSession.State.LoggedOut -> { if (session.signedOutByUser) transfers.clearAll(session.signedOutEmail) else transfers.hold(); app.filenfiles.backup.CameraBackup.disableAndForget(this@FilesApp) }
                     else -> Unit
+                }
+                // Another account than the one last seen, or a sign-out: what was handed out for the old one ends here.
+                if (it is FilenSession.State.LoggedOut) runCatching { resetAccess() }
+                if (it is FilenSession.State.LoggedIn) runCatching {
+                    val acct = filen.accountId
+                    if (app.filenfiles.filen.AccountChange.differs(prefs.lastAccount, acct)) resetAccess()
+                    if (acct != null) prefs.lastAccount = acct
                 }
                 if (it is FilenSession.State.LoggedIn) runCatching {
                     applyServerFavorites(filen.favorites().map { f -> f.id.value }.toSet())

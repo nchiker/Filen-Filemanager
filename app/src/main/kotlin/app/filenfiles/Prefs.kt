@@ -73,6 +73,20 @@ class Prefs(context: Context) {
         if (account == null || email == null) sp.edit().remove("partnerEmail").remove("partnerAccount").apply()
         else sp.edit().putString("partnerEmail", email.trim()).putString("partnerAccount", account).apply()
     }
+    /** Forgets which apps may read/write while locked (account change, sign-out). Settings then lists nothing until they ask again. */
+    fun clearLockedAccess() {
+        lockedReaders = emptySet(); lockedWriters = emptySet(); lockedReadersAsked = emptySet()
+        val e = sp.edit().remove("lockedReaders").remove("lockedWriters").remove("lockedReadersAsked")
+        sp.all.keys.filter { it.startsWith("readerLabel:") || it.startsWith("f11:") }.forEach { e.remove(it) }
+        e.apply()
+    }
+    /** The account whose session was last seen signed in (opaque id); null before the first sign-in. */
+    var lastAccount: String?
+        get() = sp.getString("lastAccount", null)
+        set(v) { sp.edit().apply { if (v == null) remove("lastAccount") else putString("lastAccount", v) }.apply() }
+    /** The folder F11 created for [pkg] under [account] (its uuid), if any. Only that folder is ever reused. */
+    fun f11Folder(pkg: String, account: String?): String? = account?.let { sp.getString("f11:$it:$pkg", null) }
+    fun setF11Folder(pkg: String, account: String?, uuid: String) { if (account != null) sp.edit().putString("f11:$account:$pkg", uuid).apply() }
     /** The name saved when the owner was asked (Android may hide other apps' names later). */
     fun lockedReaderLabel(pkg: String): String? = sp.getString("readerLabel:$pkg", null)
     fun updateAutoUpdateCheck(v: Boolean) { autoUpdateCheck = v; sp.edit().putBoolean("autoUpdateCheck", v).apply() }
