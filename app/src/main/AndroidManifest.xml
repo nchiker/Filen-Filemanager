@@ -51,26 +51,29 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-        <!-- Stack partner pairing (pinned caller only; see PairingActivities.kt). -->
+        <!-- Partner screens for Stack / Ami Pro (pinned caller only; see PartnerActivities.kt). -->
         <activity
-            android:name=".GrantReceivedFolderActivity"
-            android:enabled="${pairingEnabled}"
+            android:name=".PartnerSetupActivity"
             android:exported="true"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.FilenFiles.Dialog">
             <intent-filter>
-                <action android:name="app.filenfiles.action.GRANT_RECEIVED_FOLDER" />
+                <action android:name="app.filenfiles.action.PARTNER_SETUP" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
         <activity
-            android:name=".GrantShareFolderActivity"
-            android:enabled="${pairingEnabled}"
+            android:name=".SharePartnerActivity"
             android:exported="true"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.FilenFiles.Dialog">
             <intent-filter>
-                <action android:name="app.filenfiles.action.GRANT_SHARE_FOLDER" />
+                <action android:name="app.filenfiles.action.SHARE_WITH_PARTNER" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:host="app.filenfiles.documents" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="app.filenfiles.action.SHARE_WITH_PARTNER" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

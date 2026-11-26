@@ -37,7 +37,10 @@ import app.filenfiles.core.UploadStatus
 import app.filenfiles.transfer.TransferManager
 import app.filenfiles.transfer.TransferState
 import app.filenfiles.transfer.TransferStore
+import app.filenfiles.filen.DocsRules
 import app.filenfiles.filen.FilenSession
+import app.filenfiles.filen.FilenStorageProvider
+import app.filenfiles.filen.StoredListing
 import app.filenfiles.filen.LocalCache
 import app.filenfiles.filen.friendlyOrNull
 import kotlinx.coroutines.CancellationException
@@ -98,8 +101,12 @@ class FilenDocumentsProvider : DocumentsProvider() {
         if (documentId.startsWith(PENDING_PREFIX)) app.transfers.docIds.get(documentId) ?: documentId else documentId
 
     private val pendingSeq = AtomicLong(1)
-    /** child document id → parent document id, learned from listings; backs [isChildDocument]. */
-    private val parents = ConcurrentHashMap<String, String>()
+    /** child document id → parent document id, learned from listings and kept on disk (I4 F1); backs [isChildDocument]. */
+    private val parents = object {
+        operator fun get(id: String): String? = app.filen.docState.parent(id)
+        operator fun set(id: String, parent: String) = app.filen.docState.setParent(id, parent)
+        fun remove(id: String): String? = app.filen.docState.removeParent(id)
+    }
     private val writerThread by lazy { HandlerThread("docs-writer").apply { start() } }
 
     override fun onCreate() = true
@@ -188,7 +195,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     private fun idOf(documentId: String): ItemId {
         val id = ItemId(documentId)
-        if (id.scheme != "filen" && id.scheme != "filen-in") throw FileNotFoundException("Unknown document $documentId")
+        if (id.scheme != "filen" && id.scheme != "filen-in" && id.scheme != "filen-out") throw FileNotFoundException("Unknown document $documentId")
         return id
     }
 
@@ -199,7 +206,19 @@ class FilenDocumentsProvider : DocumentsProvider() {
      */
     private fun current(documentId: String, signal: CancellationSignal? = null): Pair<FileItem, Boolean>? {
         val id = idOf(documentId)
-        if (id.scheme != "filen" || id.key == "root") return io { blocking(signal) { app.router.stat(id) } }?.let { it to false }
+        if (id.key == "root") return io { blocking(signal) { app.router.stat(id) } }?.let { it to false }
+        if (id.scheme != "filen") {
+            // Received / outgoing share: null only when the server confirms it is gone; offline falls back to the last listing.
+            return io {
+                blocking(signal) {
+                    try { app.filen.statShared(id) } catch (e: CancellationException) { throw e
+                    } catch (e: Exception) {
+                        if (e is FileNotFoundException || e.failureKind() == FailureKind.AUTH) throw e
+                        app.filen.docState.storedItem(id.value) ?: throw e
+                    }
+                }
+            }?.let { it to false }
+        }
         return io {
             blocking(signal) {
                 try {
@@ -250,6 +269,12 @@ class FilenDocumentsProvider : DocumentsProvider() {
             add(Root.COLUMN_ICON, R.drawable.ic_launcher)
             add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_IS_CHILD)
         }
+        c.newRow().apply { // I4 F4: what this account shares with others; read only
+            add(Root.COLUMN_ROOT_ID, "filen-out"); add(Root.COLUMN_DOCUMENT_ID, "filen-out:root")
+            add(Root.COLUMN_TITLE, "Filen – Shared by me"); add(Root.COLUMN_SUMMARY, s.email)
+            add(Root.COLUMN_ICON, R.drawable.ic_launcher)
+            add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_IS_CHILD)
+        }
         return c
     }
 
@@ -259,7 +284,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         val personal = id == "filen:root"
         newRow().apply {
             add(Document.COLUMN_DOCUMENT_ID, id)
-            add(Document.COLUMN_DISPLAY_NAME, if (personal) "Filen Drive" else "Shared with me")
+            add(Document.COLUMN_DISPLAY_NAME, if (personal) "Filen Drive" else if (id == "filen-out:root") "Shared by me" else "Shared with me")
             add(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR)
             add(Document.COLUMN_SIZE, null); add(Document.COLUMN_LAST_MODIFIED, null)
             add(Document.COLUMN_FLAGS, if (personal) Document.FLAG_DIR_SUPPORTS_CREATE else 0)
@@ -282,6 +307,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
             add(Document.COLUMN_SIZE, if (item.isDirectory) null else item.size)
             add(Document.COLUMN_LAST_MODIFIED, item.modified.takeIf { it > 0 })
             add(Document.COLUMN_FLAGS, flags)
+            add(COLUMN_VERSION, DocsRules.version(item)) // I4 F3
             // A save not uploaded yet: "Uploading…" / "Waiting for network…" / "Upload failed: reason".
             if (save != null) add(Document.COLUMN_SUMMARY, UploadStatus.summary(save.state == TransferState.WAITING_NETWORK, save.state == TransferState.FAILED, save.error))
         }
@@ -311,7 +337,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         // drive's root row (name only, same row as unlocked) still answers - it is the root we list anyway.
         if (documentId == "filen:root" && app.appLock.isLockedForOthers) { c.addRoot(documentId); return c }
         requireSignedIn(doc = documentId)
-        if (documentId == "filen:root" || documentId == "filen-in:root") { c.addRoot(documentId); return c }
+        if (documentId == "filen:root" || documentId == "filen-in:root" || documentId == "filen-out:root") { c.addRoot(documentId); return c }
         val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
         c.addItem(item, documentId) // the id the caller holds, even if the file has a newer version's id now
         return c
@@ -320,25 +346,42 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
         requireSignedIn(doc = parentDocumentId)
         val parent = idOf(parentDocumentId)
-        // Offline, a fresh listing can't be fetched. Answer from the last listing we saw (if any) plus the uploads we know
-        // about, so a client that just wrote a file can still see it "Waiting for network…" instead of getting an error.
-        var stale = false
-        val listing = try {
-            blocking { app.router.list(parent) }
+        val docState = app.filen.docState
+        // Offline, a fresh listing can't be fetched. Answer from the last listing we saw (kept on disk, so also after a
+        // process death) plus the uploads we know about, marked FRESH=false so a client never reads it as "the folder
+        // is empty now". Only a listing that came from Filen in this call says FRESH=true (I4 F2, I6).
+        var failure: Throwable? = null
+        var listing: Listing? = null
+        try {
+            listing = blocking { app.router.list(parent) }
         } catch (e: OperationCanceledException) { throw e
-        } catch (e: Throwable) {
-            if (e.failureKind() == FailureKind.NETWORK && (app.listingCache[parent.value] != null || pendingRowsIn(parent).isNotEmpty())) {
-                stale = true
-                app.listingCache[parent.value] ?: Listing(Folder(parent, "", Origin.FILEN_PERSONAL), emptyList(), emptyList())
-            } else io<Listing> { throw e }
+        } catch (e: Throwable) { failure = e }
+        var stored: StoredListing? = null
+        if (failure != null) {
+            val kind = failure.failureKind()
+            val gone = if (failure is FileNotFoundException) true
+                else if (kind == FailureKind.AUTH) null
+                else runCatching { blocking { app.filen.parentLookup(parent) } is FilenStorageProvider.ParentLookup.Gone }.getOrNull()
+            stored = docState.listing(parent.value)
+            when (DocsRules.decideList(kind, gone, stored != null || pendingRowsIn(parent).isNotEmpty())) {
+                DocsRules.ListOutcome.NOT_FOUND -> throw FileNotFoundException(parentDocumentId)
+                DocsRules.ListOutcome.AUTH -> throw authError("Sign in to Filen")
+                DocsRules.ListOutcome.IO -> io<Unit> { throw failure }
+                else -> {
+                    listing = Listing(Folder(parent, "", Origin.FILEN_PERSONAL), stored?.items ?: emptyList(), emptyList())
+                    android.util.Log.d("FilenDebug", "Offline: answering a listing from the stored copy and the upload queue")
+                }
+            }
         }
-        if (!stale) app.listingCache[parent.value] = listing // remembered for offline answers (dropped on sign-out)
-        if (stale) android.util.Log.d("FilenDebug", "Offline: answering the listing of $parentDocumentId from the cache and the upload queue")
+        val fresh = failure == null
+        val items = listing!!.items
+        if (fresh) { app.listingCache[parent.value] = listing; docState.putListing(parent.value, items) }
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
         c.setNotificationUri(context!!.contentResolver, android.provider.DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId))
-        listing.items.forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
+        c.extras = android.os.Bundle().apply { putBoolean(EXTRA_FRESH, fresh); putString(EXTRA_ACCOUNT, app.filen.accountId ?: "") }
+        items.forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
         // Just-finished uploads that Filen's listing doesn't show yet (it can lag a few seconds): no gap for the client.
-        app.transfers.recentUploads.missingFrom(parent, listing.items.map { it.id }).forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
+        app.transfers.recentUploads.missingFrom(parent, items.map { it.id }).forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
         pendingRowsIn(parent).forEach { c.addPending(it) }
         return c
     }
@@ -367,19 +410,30 @@ class FilenDocumentsProvider : DocumentsProvider() {
         if (parentDocumentId == documentId) return false
         var cur = documentId
         repeat(64) {
-            val p = parents[cur] ?: pendingParent(cur) ?: fetchParent(cur) ?: return false
+            val p = parents[cur] ?: pendingParent(cur) ?: (fetchParent(cur) ?: return false)
             if (p == parentDocumentId) return true
             cur = p
         }
         return false
     }
 
-    private fun fetchParent(documentId: String): String? = runCatching {
+    /**
+     * The parent of [documentId] from Filen. null = a root (the item is really outside any folder asked about). Throws
+     * [FileNotFoundException] only when Filen confirms the item or its share is gone, [AuthenticationRequiredException]
+     * when signed out, and [java.io.IOException] for anything else (offline, timeout): never a "not a child" answer
+     * for a lookup that failed (I4 F1).
+     */
+    private fun fetchParent(documentId: String): String? {
         val id = ItemId(documentId)
-        if (id.key == "root" || (id.scheme != "filen" && id.scheme != "filen-in")) return@runCatching null
+        if (id.key == "root" || (id.scheme != "filen" && id.scheme != "filen-in" && id.scheme != "filen-out")) return null
         awaitSession()
-        blocking { if (id.scheme == "filen") app.filen.currentParent(id) else app.filen.parentOf(id) }?.value?.also { parents[documentId] = it }
-    }.getOrNull()
+        val r = io { blocking { app.filen.parentLookup(id) } }
+        return when (r) {
+            is FilenStorageProvider.ParentLookup.Found -> r.parent.value.also { parents[documentId] = it }
+            FilenStorageProvider.ParentLookup.Top -> null
+            FilenStorageProvider.ParentLookup.Gone -> throw FileNotFoundException(documentId)
+        }
+    }
 
     // ---------- reading ----------
 
@@ -548,6 +602,12 @@ class FilenDocumentsProvider : DocumentsProvider() {
 
     companion object {
         const val AUTHORITY = "app.filenfiles.documents"
+        /** I4 F3: opaque; changes whenever the file's content changes. */
+        const val COLUMN_VERSION = "app.filenfiles.version"
+        /** I4 F2: boolean on every child listing - true only when it was listed from Filen in this call. */
+        const val EXTRA_FRESH = "app.filenfiles.extra.FRESH"
+        /** I4 F2/F6: the opaque account id the listing belongs to. */
+        const val EXTRA_ACCOUNT = "app.filenfiles.extra.ACCOUNT"
         private const val LOCKED = "Filen Files is locked"
         private const val PENDING_PREFIX = "filen-pending:"
         private val ROOT_PROJECTION = arrayOf(
@@ -555,7 +615,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         )
         private val DOC_PROJECTION = arrayOf(
             Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,
-            Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS, Document.COLUMN_SUMMARY,
+            Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED, Document.COLUMN_FLAGS, Document.COLUMN_SUMMARY, COLUMN_VERSION,
         )
     }
 }

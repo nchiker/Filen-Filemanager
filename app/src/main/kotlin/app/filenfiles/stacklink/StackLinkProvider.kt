@@ -7,10 +7,10 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.provider.DocumentsContract
-import app.filenfiles.BuildConfig
 import app.filenfiles.FilesApp
 import app.filenfiles.core.ItemId
 import app.filenfiles.filen.FilenSession
+import app.filenfiles.filen.Partner
 import app.filenfiles.filen.StackLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -21,7 +21,8 @@ import org.json.JSONObject
  * ask, identified by kernel uid -> package -> certificate SHA-256 ([StackLink.callerAllowed]); everyone else is refused.
  *  - `locate(uri)`: the Filen document URI -> {uuid, path}, or {error: "not_filen"}.
  *  - `lookup(uuid)`: -> {exists, path, trashed, shared}.
- *  - `account()`: -> {email}, the signed-in Filen account (Stack puts it in the pairing QR).
+ *  - `account()`: -> {account_id}, an opaque stable id of the signed-in account (not the email), or {error: "signed_out"}.
+ *  - `partner_status()`: -> {state: none|requested|incoming|connected, name}; `name` is a display name, never an address.
  * Errors: `refused` (caller not pinned), `locked` (app lock on), `not_signed_in`, `unreachable` (Filen could not be asked).
  */
 class StackLinkProvider : ContentProvider() {
@@ -36,12 +37,13 @@ class StackLinkProvider : ContentProvider() {
         // Session restore runs in the background after a cold start.
         val deadline = System.currentTimeMillis() + 10_000
         while (app.session.state.value is FilenSession.State.Unknown && System.currentTimeMillis() < deadline) Thread.sleep(50)
-        if (app.session.state.value !is FilenSession.State.LoggedIn) return err("not_signed_in")
+        if (app.session.state.value !is FilenSession.State.LoggedIn) return err(if (method == "account") "signed_out" else "not_signed_in")
         return try {
             when (method) {
                 "locate" -> locate(app, arg)
                 "lookup" -> lookup(app, arg)
-                "account" -> if (!BuildConfig.PAIRING_ENABLED) err("unsupported") else Bundle().apply { putString("email", (app.session.state.value as FilenSession.State.LoggedIn).email) }
+                "account" -> app.filen.accountId?.let { Bundle().apply { putString("account_id", it) } } ?: err("signed_out")
+                "partner_status" -> partnerStatus(app)
                 else -> err("invalid")
             }
         } catch (_: Exception) { err("unreachable") }
@@ -67,6 +69,14 @@ class StackLinkProvider : ContentProvider() {
         return Bundle().apply {
             putBoolean("exists", r.exists); putBoolean("trashed", r.trashed); putBoolean("shared", r.shared)
             putString("path", r.path ?: "")
+        }
+    }
+
+    private fun partnerStatus(app: FilesApp): Bundle {
+        val st = runBlocking(Dispatchers.IO) { app.filen.partnerStatus(app.prefs.partnerFor(app.filen.accountId)) }
+        return Bundle().apply {
+            putString("state", st.state.wire)
+            st.who?.let { putString("name", Partner.displayName(it)) }
         }
     }
 

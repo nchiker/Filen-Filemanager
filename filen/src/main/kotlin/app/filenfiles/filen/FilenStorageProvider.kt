@@ -63,8 +63,18 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val personalDirObjs = ConcurrentHashMap<String, Dir>()
     private val sharedDirs = ConcurrentHashMap<String, SharedDirNode>()   // key = full ItemId value
     private val sharedFiles = ConcurrentHashMap<String, SharedFileNode>() // key = full ItemId value
-    /** child ItemId -> parent folder ItemId for shared items; survives in the persisted index so nested folders resolve cold. */
-    private val sharedParents = ConcurrentHashMap<String, String>()
+    /**
+     * What the documents provider keeps across a process death: child -> parent ids (all namespaces) and the last
+     * listing of each folder. Nested shared folders resolve cold from this, without the user opening Filen (I4 F1/F2).
+     */
+    val docState = DocsState(JFile(context.filesDir, "docs-state/state.bin"), { session.accountId })
+    /** Opaque stable id of the signed-in account (I4 F6); null when signed out. */
+    val accountId: String? get() = if (session.isSignedIn) session.accountId else null
+    /** child ItemId -> parent folder ItemId, kept in [docState]. */
+    private val sharedParents = object {
+        operator fun get(id: String): String? = docState.parent(id)
+        operator fun set(id: String, parent: String) = docState.setParent(id, parent)
+    }
 
     private val client get() = session.client
 
@@ -244,11 +254,9 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             val title = rootTitle(scheme)
             return Listing(Folder(folder, title, originOf(scheme)), items, listOf(Crumb(folder, title)))
         }
-        val node = sharedDirs[folder.value] ?: run {
-            // After a process restart nested shared dirs are unknown: re-list the path down to them.
-            resolveShared(folder)
-            sharedDirs[folder.value]
-        } ?: error("This shared folder is no longer in memory; reopen it from the Shared tab.")
+        // After a process restart nested shared dirs are unknown: find them again (a confirmed miss = no longer shared).
+        val node = (sharedDirs[folder.value] ?: run { ensureShared(folder); sharedDirs[folder.value] })
+            ?: throw java.io.FileNotFoundException("This folder is no longer shared")
         val res = timed("listSharedDir") { client.listSharedDir(node.any, node.role) }
         val items = res.dirs.map { d ->
             sharedDirItem(AnySharedDir.Dir(d), d.inner.uuid, d.inner.meta, d.inner.timestamp, node.role,
@@ -277,6 +285,68 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         if (parent != null && parent != rootId && sharedDirs[target.value] == null && sharedFiles[target.value] == null && sharedDirs[parent] != null) {
             listShared(ItemId(parent))
         }
+    }
+
+    private val findLock = Mutex()
+    private fun registered(id: ItemId) = sharedDirs[id.value] != null || sharedFiles[id.value] != null
+
+    /**
+     * Makes sure the shared item [target] is registered (so it can be listed or opened) after a process restart.
+     * First the remembered chain of parents is re-listed; if that does not find it (the chain is unknown or stale),
+     * the shares are searched top-down from the root, listing folders until the item turns up. The SDK has no call
+     * that asks the server for a received item's parent (get-by-uuid only knows the own drive), so this is the
+     * server lookup. Returns true when found. Returns false ONLY after every folder was listed from the server without
+     * error and the item is not in any of them (the share is gone); anything else (offline, a failing folder, too
+     * many folders) throws, which callers report as "unknown".
+     */
+    private suspend fun ensureShared(target: ItemId): Boolean {
+        if (registered(target)) return true
+        findLock.withLock {
+            if (registered(target)) return true
+            try { resolveShared(target) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* chain stale: search below */ }
+            if (registered(target)) return true
+            val rootId = ItemId("${target.scheme}:$ROOT")
+            val queue = ArrayDeque<ItemId>().apply { add(rootId) }
+            var listed = 0
+            while (queue.isNotEmpty()) {
+                if (++listed > MAX_SEARCH_FOLDERS) throw java.io.IOException("Too many shared folders to search")
+                val l = listShared(queue.removeFirst())
+                if (registered(target)) return true
+                l.items.filter { it.isDirectory }.forEach { queue.add(it.id) }
+            }
+            return false
+        }
+    }
+
+    /** Like [stat] for a shared item, but throws when it cannot be told; null only when the share is confirmed gone. */
+    suspend fun statShared(id: ItemId): FileItem? = io {
+        if (!ensureShared(id)) return@io null
+        sharedFiles[id.value]?.item ?: sharedDirs[id.value]?.let { n ->
+            FileItem(id, n.name, true, 0, 0, null, originOf(n.scheme), if (n.write) Permission.READ_WRITE else Permission.READ_ONLY)
+        }
+    }
+
+    /** I4 F1: where an item sits. */
+    sealed interface ParentLookup {
+        data class Found(val parent: ItemId) : ParentLookup
+        /** The item is a root. */
+        data object Top : ParentLookup
+        /** The server confirms the item (or its share) is gone. */
+        data object Gone : ParentLookup
+    }
+
+    /** The folder of [id] from the persisted map or the server. Throws (never answers Gone) when it cannot be told. */
+    suspend fun parentLookup(id: ItemId): ParentLookup = io {
+        if (id.key == ROOT) return@io ParentLookup.Top
+        if (id.scheme == P) {
+            val file = client.getFileOptional(id.key)?.let { headOf(it) ?: return@io ParentLookup.Gone } // an older version's uuid names the current file
+            val p = if (file != null) file.parent else (client.getDirOptional(id.key) ?: return@io ParentLookup.Gone).parent
+            val pid = personalParentId(p) ?: return@io ParentLookup.Gone // in the trash or not in the drive
+            return@io ParentLookup.Found(ItemId(pid))
+        }
+        sharedParents[id.value]?.let { return@io ParentLookup.Found(ItemId(it)) }
+        if (!ensureShared(id)) return@io ParentLookup.Gone
+        sharedParents[id.value]?.let { ParentLookup.Found(ItemId(it)) } ?: ParentLookup.Gone
     }
 
     private fun rootTitle(scheme: String) = if (scheme == IN) "Shared with me" else "Shared by me"
@@ -382,16 +452,36 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override suspend fun addContact(email: String) { io { client.sendContactRequest(email.trim()) } }
 
-    // ---------- Stack pairing (contacts are the channel; see docs/STACK_PARTNER_FOLDERS_SCOPE.md) ----------
+    // ---------- partner (Stack folder sharing: I4 F7-F9; contacts are the channel) ----------
 
-    class ContactRequest(val uuid: String, val email: String)
+    class ContactRequest(val uuid: String, val email: String, val nick: String? = null) {
+        val person get() = Person(email, nick)
+    }
     enum class Contacted { CONNECTED, REQUESTED }
 
+    /** Everything the partner screens and `partner_status` need, from the server. */
+    class PartnerLists(val contacts: List<Person>, val outgoing: List<Person>, val incoming: List<ContactRequest>)
+
     suspend fun incomingRequests(): List<ContactRequest> = io {
-        client.listIncomingContactRequests().map { ContactRequest(it.uuid, it.email) }
+        client.listIncomingContactRequests().map { ContactRequest(it.uuid, it.email, it.nickName.takeIf(String::isNotBlank)) }
     }
 
-    /** Partner side: make [email] a contact. Accepts their pending request, or sends ours (once). */
+    suspend fun partnerLists(): PartnerLists = io {
+        PartnerLists(
+            client.getContacts().map { Person(it.email, it.nickName?.takeIf(String::isNotBlank)) },
+            client.listOutgoingContactRequests().map { Person(it.email, it.nickName.takeIf(String::isNotBlank)) },
+            client.listIncomingContactRequests().map { ContactRequest(it.uuid, it.email, it.nickName.takeIf(String::isNotBlank)) },
+        )
+    }
+
+    /** [saved] is the partner chosen earlier (see [Partner.decide]). */
+    suspend fun partnerStatus(saved: String?): PartnerStatus = partnerLists().let { l ->
+        Partner.decide(saved, l.contacts, l.outgoing, l.incoming.map { it.person })
+    }
+
+    suspend fun acceptRequest(request: ContactRequest): Unit = io { client.acceptContactRequest(request.uuid) }
+
+    /** Make [email] a contact: accepts their pending request, or sends ours (once). */
     suspend fun connectTo(email: String): Contacted = io {
         val want = email.trim()
         require(want.isNotEmpty() && '@' in want) { "That is not an email address" }
@@ -403,22 +493,27 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         Contacted.REQUESTED
     }
 
-    /** Partner side: the top-level received folder [name] that [ownerEmail] shared with us, or null if it has not arrived. */
-    suspend fun receivedFolderFrom(ownerEmail: String, name: String): ItemId? = io {
-        val hit = client.listInSharedRoot().dirs.firstOrNull { d ->
-            (d.sharingRole as? SharingRole.Receiver)?.v1?.email.equals(ownerEmail.trim(), true) && dirName(d.inner.meta) == name
-        } ?: return@io null
-        listShared(ItemId("$IN:$ROOT")) // fill the registry so the documents provider can open it right away
-        ItemId("$IN:${hit.inner.uuid}")
-    }
-
-    /** Owner side: accept [request] (if any), then share personal folder [folder] with that contact (once). */
-    suspend fun shareFolderWith(folder: ItemId, email: String, request: ContactRequest?): Unit = io {
-        require(folder.scheme == P && folder.key != ROOT) { "Only a folder in your own drive can be shared" }
-        if (request != null) client.acceptContactRequest(request.uuid)
+    /**
+     * Shares the personal file or folder [id] with the contact [email] (once), or with [stop] stops sharing it with them.
+     * Returns whether it is shared with them afterwards. The partner must already be a contact.
+     */
+    suspend fun sharePartner(id: ItemId, email: String, stop: Boolean): Boolean = io {
+        require(id.scheme == P && id.key != ROOT) { "Only an item in your own drive can be shared" }
         val contact = client.getContacts().firstOrNull { it.email.equals(email.trim(), true) } ?: error("That person is not a contact yet")
-        val dir = dirObj(folder)
-        if (client.listOutShared(contact).dirs.none { it.inner.uuid == dir.uuid }) client.shareDir(dir, contact, null)
+        val out = client.listOutShared(contact)
+        val dirShared = out.dirs.any { it.inner.uuid == id.key }
+        val fileShared = out.files.any { it.uuid == id.key }
+        if (stop) {
+            out.dirs.filter { it.inner.uuid == id.key }.forEach { client.removeSharedItem(SharedRootItem.Dir(it)) }
+            out.files.filter { it.uuid == id.key }.forEach { client.removeSharedItem(SharedRootItem.File(it)) }
+            outRoots.remove("$OUT:${id.key}")
+            if (fileShared) stackEvent { if (!stillShared(id.key)) StackLink.unshared(context, id.key) }
+            return@io false
+        }
+        if (!dirShared && !fileShared) {
+            if (client.getDirOptional(id.key) != null) client.shareDir(dirObj(id), contact, null) else client.shareFile(fileObj(id), contact)
+        }
+        true
     }
 
     // ---------- public links ----------
@@ -658,7 +753,8 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             personalIndex = emptyList(); sharedIndex = emptyList(); personalAt = 0; sharedAt = 0; personalDirty = false
         }
         loadedAccount = null; rootCache = null
-        listOf(dirCache, personalFiles, personalDirObjs, sharedDirs, sharedFiles, sharedParents, trashedFiles, trashedDirs, outRoots, contactMap).forEach { it.clear() }
+        listOf(dirCache, personalFiles, personalDirObjs, sharedDirs, sharedFiles, trashedFiles, trashedDirs, outRoots, contactMap).forEach { it.clear() }
+        docState.clear()
         indexFile().delete()
         pins.wipe()
     }
@@ -1235,6 +1331,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         private const val SHARED_TTL = 24 * 3_600_000L
         private const val SHARED_CRAWL_BUDGET = 3000
         private const val SHARED_CRAWL_MAX_MS = 120_000L
+        private const val MAX_SEARCH_FOLDERS = 400
         private const val SEARCH_WAIT_MS = 5_000L
     }
 }

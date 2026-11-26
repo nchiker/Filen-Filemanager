@@ -32,6 +32,11 @@ class FilenSession(private val context: Context) {
     val client: JsClient get() = _client ?: error("Not signed in to Filen")
     val isSignedIn: Boolean get() = _client != null
 
+    /** Filen's numeric user id of the account last signed in on this phone (kept through an expiry, cleared by sign-out). */
+    @Volatile private var userId: ULong? = null
+    /** Opaque, stable id of the account (not the email); null when nobody has signed in. See [DocsRules.accountId]. */
+    val accountId: String? get() = userId?.let(DocsRules::accountId)
+
     private val prefs by lazy {
         val key = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
         EncryptedSharedPreferences.create(
@@ -53,6 +58,7 @@ class FilenSession(private val context: Context) {
         try {
             val s = decode(raw)
             _client = unauth().fromStringified(s)
+            userId = s.userId
             _state.value = State.LoggedIn(s.email)
         } catch (e: Exception) {
             prefs.edit().remove("session").apply()
@@ -65,6 +71,7 @@ class FilenSession(private val context: Context) {
         val s = c.toStringified()
         prefs.edit().putString("session", encode(s)).putString("lastEmail", s.email).apply()
         _client = c
+        userId = s.userId
         signedOutByUser = false
         _state.value = State.LoggedIn(s.email)
     }
@@ -87,6 +94,7 @@ class FilenSession(private val context: Context) {
         signedOutByUser = true
         prefs.edit().remove("session").apply()
         _client = null
+        userId = null
         _state.value = State.LoggedOut
     }
 

@@ -63,6 +63,16 @@ class Prefs(context: Context) {
         sp.edit().putStringSet("lockedWriters", lockedWriters).apply()
         setLockedReader(pkg, true, label)
     }
+    /**
+     * The partner the owner chose in the partner setup (Stack folder sharing). Tied to the account that chose it, so a
+     * different account never inherits it. [account] is the opaque account id.
+     */
+    fun partnerFor(account: String?): String? =
+        if (account != null && sp.getString("partnerAccount", null) == account) sp.getString("partnerEmail", null) else null
+    fun setPartner(account: String?, email: String?) {
+        if (account == null || email == null) sp.edit().remove("partnerEmail").remove("partnerAccount").apply()
+        else sp.edit().putString("partnerEmail", email.trim()).putString("partnerAccount", account).apply()
+    }
     /** The name saved when the owner was asked (Android may hide other apps' names later). */
     fun lockedReaderLabel(pkg: String): String? = sp.getString("readerLabel:$pkg", null)
     fun updateAutoUpdateCheck(v: Boolean) { autoUpdateCheck = v; sp.edit().putBoolean("autoUpdateCheck", v).apply() }

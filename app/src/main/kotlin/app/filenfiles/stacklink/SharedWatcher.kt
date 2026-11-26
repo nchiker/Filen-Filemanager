@@ -24,8 +24,8 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
- * Change notice for received shares (Stack partner folders). For every received-share tree another app holds a persisted
- * read grant on (authority app.filenfiles.documents, document id `filen-in:...`) it compares a fingerprint of the tree
+ * Change notice for Stack partner folders (I4 F5). For every tree (drive, shared with me, shared by me) a pinned app holds a
+ * persisted read grant on (authority app.filenfiles.documents, document id `filen:`, `filen-in:` or `filen-out:`) it compares a fingerprint of the tree
  * (names, sizes, times) with the last one and, when it changed, calls notifyChange on the tree's child-documents URI and
  * sends the explicit broadcast [ACTION] (extra [EXTRA_TREE_URI], a String) to Stack's package only. It only notifies:
  * nothing is shared, read or copied. The first sight of a tree just records a baseline (Stack imports at its own start).
@@ -42,12 +42,29 @@ object SharedWatcher {
     private var handle: AutoCloseable? = null
     private val lock = Any()
 
-    /** Persisted read grants on received-share trees. */
-    private fun grantedTrees(ctx: Context): List<Uri> = ctx.contentResolver.outgoingPersistedUriPermissions
-        .filter { it.isReadPermission && it.uri.authority == FilenDocumentsProvider.AUTHORITY && DocumentsContract.isTreeUri(it.uri) }
-        .map { it.uri }
-        .filter { runCatching { DocumentsContract.getTreeDocumentId(it).startsWith("filen-in:") }.getOrDefault(false) }
-        .distinct()
+    /** Pinned callers (Stack, or the test package of a checks build) that are installed: the only ones ever told. */
+    private fun pinnedTargets(ctx: Context): List<Pair<String, Int>> =
+        setOf(StackLink.STACK_PACKAGE, StackLink.testPackage).filter { it.isNotEmpty() }.mapNotNull { pkg ->
+            runCatching { pkg to ctx.packageManager.getPackageUid(pkg, 0) }.getOrNull()
+        }
+
+    /** Persisted read grants on a drive, shared-with-me or shared-by-me tree that a pinned caller holds; the packages holding each. */
+    private fun grantedTrees(ctx: Context): Map<Uri, List<String>> {
+        val targets = pinnedTargets(ctx)
+        if (targets.isEmpty()) return emptyMap()
+        val out = LinkedHashMap<Uri, List<String>>()
+        for (g in ctx.contentResolver.outgoingPersistedUriPermissions) {
+            val u = g.uri
+            if (!g.isReadPermission || u.authority != FilenDocumentsProvider.AUTHORITY || !DocumentsContract.isTreeUri(u) || u in out) continue
+            val id = runCatching { DocumentsContract.getTreeDocumentId(u) }.getOrNull() ?: continue
+            if (!(id.startsWith("filen:") || id.startsWith("filen-in:") || id.startsWith("filen-out:"))) continue
+            val holders = targets.filter { (_, uid) ->
+                ctx.checkUriPermission(u, -1, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            }.map { it.first }
+            if (holders.isNotEmpty()) out[u] = holders
+        }
+        return out
+    }
 
     private suspend fun fingerprint(app: FilesApp, root: ItemId): String? {
         val md = MessageDigest.getInstance("SHA-256")
@@ -68,10 +85,10 @@ object SharedWatcher {
     suspend fun check(app: FilesApp): Int {
         if (app.session.state.value !is FilenSession.State.LoggedIn) return 0
         val trees = grantedTrees(app)
-        if (trees.isEmpty()) return 0
+        if (trees.isEmpty()) { android.util.Log.d("SharedWatcher", "SharedWatcher: 0 trees, 0 changed"); return 0 }
         val sp = app.getSharedPreferences("shared-watch", Context.MODE_PRIVATE)
         var changed = 0
-        for (tree in trees) {
+        for ((tree, holders) in trees) {
             val doc = DocumentsContract.getTreeDocumentId(tree)
             val now = fingerprint(app, ItemId(doc)) ?: continue // unreadable right now: keep the old baseline
             val key = tree.toString()
@@ -80,18 +97,18 @@ object SharedWatcher {
             sp.edit().putString(key, now).apply()
             if (before == null) continue // baseline only
             changed++
-            notify(app, tree, doc)
+            notify(app, tree, doc, holders)
         }
+        android.util.Log.d("SharedWatcher", "SharedWatcher: ${trees.size} trees, $changed changed") // counts only: no names, ids or addresses
         // Forget trees whose grant is gone.
-        val gone = sp.all.keys - trees.map { it.toString() }.toSet()
+        val gone = sp.all.keys - trees.keys.map { it.toString() }.toSet()
         if (gone.isNotEmpty()) sp.edit().apply { gone.forEach { remove(it) } }.apply()
         return changed
     }
 
-    private fun notify(app: FilesApp, tree: Uri, doc: String) {
+    private fun notify(app: FilesApp, tree: Uri, doc: String, holders: List<String>) {
         runCatching { app.contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, doc), null) }
-        val targets = setOf(StackLink.STACK_PACKAGE, StackLink.testPackage).filter { it.isNotEmpty() }
-        for (pkg in targets) runCatching {
+        for (pkg in holders) runCatching {
             app.sendBroadcast(Intent(ACTION).setPackage(pkg).putExtra(EXTRA_TREE_URI, tree.toString()))
         }
     }
