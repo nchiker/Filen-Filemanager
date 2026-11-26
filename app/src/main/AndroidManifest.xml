@@ -77,6 +77,16 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".CreateSharedFolderActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FilenFiles.Dialog">
+            <intent-filter>
+                <action android:name="app.filenfiles.action.CREATE_SHARED_FOLDER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".transfer.TransferService"
             android:exported="false"

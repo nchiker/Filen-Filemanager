@@ -25,7 +25,7 @@ import org.json.JSONObject
  *  - `locate(uri)`: the Filen document URI -> {uuid, path}, or {error: "not_filen"}.
  *  - `lookup(uuid)`: -> {exists, path, trashed, shared}.
  *  - `account()`: -> {account_id}, an opaque stable id of the signed-in account (not the email), or {error: "signed_out"}.
- *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner), or {error: not_found | signed_out | unknown}.
+ *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner) plus {shared_via} (name of the nearest shared folder above it, when the item itself is not shared), or {error: not_found | signed_out | unknown}.
  *  - `partner_status()`: -> {state: none|requested|incoming|connected, name}; `name` is a display name, never an address.
  * Errors: `refused` (caller not pinned), `locked` (app lock on), `not_signed_in`, `unreachable` (Filen could not be asked).
  */
@@ -82,7 +82,7 @@ class StackLinkProvider : ContentProvider() {
         if (!UUID.matches(uuid)) return err("invalid")
         return try {
             when (val r = runBlocking(Dispatchers.IO) { app.filen.shareState(uuid, app.prefs.partnerFor(app.filen.accountId)) }) {
-                is ShareAnswer.Known -> Bundle().apply { putBoolean("shared", r.shared) }
+                is ShareAnswer.Known -> Bundle().apply { putBoolean("shared", r.shared); r.via?.let { putString("shared_via", it) } }
                 ShareAnswer.NotFound -> err("not_found")
             }
         } catch (e: Exception) { err(if (e.failureKind() == FailureKind.AUTH) "signed_out" else "unknown") }

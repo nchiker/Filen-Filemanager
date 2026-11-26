@@ -21,3 +21,24 @@ class ShareStateTest {
         assertFalse(ShareRules.isShared("abc", emptySet()))
     }
 }
+
+class FolderNamesAndAncestorsTest {
+    @Test fun uniqueName() {
+        assertEquals("Scans", FolderNames.unique("Scans", listOf("Other")))
+        assertEquals("Scans 2", FolderNames.unique("Scans", listOf("scans")))
+        assertEquals("Scans 3", FolderNames.unique("Scans", listOf("Scans", "Scans 2")))
+    }
+    private val tree = mapOf("c" to ("C" to "b"), "b" to ("B" to "a"), "a" to ("A" to null as String?))
+    @Test fun nearestSharedFolderAbove() {
+        assertEquals("B", Ancestors.nearestShared("c", setOf("b", "a")) { tree[it] })
+        assertEquals("A", Ancestors.nearestShared("c", setOf("a")) { tree[it] })
+        assertNull(Ancestors.nearestShared("c", setOf("zzz")) { tree[it] })
+        assertNull(Ancestors.nearestShared(null, setOf("a")) { tree[it] })
+    }
+    @Test fun walkIsBoundedAndStopsOnUnknown() {
+        var calls = 0
+        assertNull(Ancestors.nearestShared("x", setOf("never"), maxSteps = 5) { calls++; "n" to "x" }) // a loop cannot run away
+        assertEquals(5, calls)
+        assertNull(Ancestors.nearestShared("q", setOf("q")) { null })
+    }
+}

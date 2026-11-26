@@ -19,7 +19,8 @@ class OutShareCache(private val ttlMs: Long = 20_000, private val now: () -> Lon
 
 /** What `share_state` found out. */
 sealed interface ShareAnswer {
-    data class Known(val shared: Boolean) : ShareAnswer
+    /** [via]: name of the nearest folder above the item that is shared with the partner (only when the item itself is not). */
+    data class Known(val shared: Boolean, val via: String? = null) : ShareAnswer
     /** The item is not in the signed-in user's drive (or is in the trash). */
     data object NotFound : ShareAnswer
 }
@@ -27,4 +28,32 @@ sealed interface ShareAnswer {
 object ShareRules {
     /** An item counts as shared when it is itself shared with the partner (not merely inside a shared folder). */
     fun isShared(uuid: String, sharedWithPartner: Set<String>) = uuid.lowercase() in sharedWithPartner
+}
+
+object FolderNames {
+    /** [base], or "[base] 2", "[base] 3"... : the first name not in [taken] (compared ignoring case). */
+    fun unique(base: String, taken: Collection<String>): String {
+        val t = taken.map { it.lowercase() }.toSet()
+        if (base.lowercase() !in t) return base
+        var n = 2
+        while ("$base $n".lowercase() in t) n++
+        return "$base $n"
+    }
+}
+
+object Ancestors {
+    /**
+     * Walks up from [start] (the item's parent) with [step] (uuid -> name and parent of that folder, null at the top or when
+     * unknown) and returns the name of the first folder in [shared]. At most [maxSteps] folders are looked at.
+     */
+    inline fun nearestShared(start: String?, shared: Set<String>, maxSteps: Int = 32, step: (String) -> Pair<String, String?>?): String? {
+        var cur = start
+        repeat(maxSteps) {
+            val c = cur ?: return null
+            val (name, parent) = step(c) ?: return null
+            if (c.lowercase() in shared) return name
+            cur = parent
+        }
+        return null
+    }
 }

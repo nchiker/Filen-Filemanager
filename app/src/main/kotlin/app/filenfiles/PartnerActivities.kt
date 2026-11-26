@@ -325,3 +325,92 @@ class SharePartnerActivity : PartnerActivity() {
         private val UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     }
 }
+
+/**
+ * `app.filenfiles.action.CREATE_SHARED_FOLDER` (I4 F11): one confirm sheet, then a folder in the drive root (or an existing
+ * one already shared with the partner) is shared with the partner and returned as a persistable READ+WRITE tree grant.
+ * No partner yet: partner setup first. Result: RESULT_OK with clip data, or RESULT_CANCELED with ERROR.
+ */
+class CreateSharedFolderActivity : PartnerActivity() {
+    private var folderName = "Scans"
+    private var partner by mutableStateOf<PartnerDone?>(null)
+    private var needSetup by mutableStateOf(false)
+    private var loaded by mutableStateOf(false)
+    private var busy by mutableStateOf(false)
+    private var message by mutableStateOf<String?>(null)
+
+    override fun prepare(): Boolean {
+        folderName = GrantFolderActivity.cleanName(intent.getStringExtra(EXTRA_NAME)) ?: "Scans"
+        return true
+    }
+
+    @Composable override fun Content() {
+        LaunchedEffect(Unit) { load() }
+        if (!loaded) { CircularProgressIndicator(); return }
+        val p = partner
+        if (needSetup || p == null) {
+            if (needSetup) { PartnerSetup(app, { partner = it; needSetup = false; message = if (it.state == PartnerState.REQUESTED) "Waiting for ${it.name} to accept. Try again then." else null },
+                { cancel("user_cancelled") }, ::failMessage); return }
+            AlertDialog(
+                onDismissRequest = { cancel("user_cancelled") },
+                title = { Text("Add a partner first") },
+                text = { Text("Share files with one person you trust.") },
+                confirmButton = { TextButton({ needSetup = true }) { Text("Add partner") } },
+                dismissButton = { TextButton({ cancel("user_cancelled") }) { Text("Cancel") } },
+            )
+            return
+        }
+        AlertDialog(
+            onDismissRequest = { if (!busy) cancel("user_cancelled") },
+            title = { Text("Create “$folderName” and share it with ${p.name}?") },
+            text = {
+                Column {
+                    Text("$callerLabel can add files to it, even when Filen Files is locked. ${p.name} can open them.")
+                    message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                }
+            },
+            confirmButton = { TextButton(enabled = !busy && p.state == PartnerState.CONNECTED, onClick = { go(p) }) { Text(if (busy) "Please wait…" else "Create and share") } },
+            dismissButton = { TextButton(enabled = !busy, onClick = { cancel("user_cancelled") }) { Text("Cancel") } },
+        )
+    }
+
+    private suspend fun load() {
+        try {
+            val saved = app.prefs.partnerFor(app.filen.accountId)
+            if (saved != null) {
+                val st = withContext(Dispatchers.IO) { app.filen.partnerStatus(saved) }
+                val who = st.who
+                if (who != null && st.state != PartnerState.NONE) partner = PartnerDone(
+                    if (st.state == PartnerState.CONNECTED) PartnerState.CONNECTED else PartnerState.REQUESTED, Partner.displayName(who), who.email)
+                if (partner?.state == PartnerState.REQUESTED) message = "Waiting for ${partner!!.name} to accept. Try again then."
+            }
+            loaded = true
+        } catch (e: CancellationException) { throw e } catch (e: Throwable) {
+            cancel(if (e.failureKind() == FailureKind.NETWORK) "offline" else "failed", failMessage(e))
+        }
+    }
+
+    private fun go(p: PartnerDone) {
+        busy = true; message = null
+        lifecycleScope.launch {
+            try {
+                val (id, name) = withContext(Dispatchers.IO) { app.filen.ensureSharedFolder(folderName, p.email) }
+                app.docsChanged(ItemId("filen:root")); app.notifyChanged()
+                runCatching { contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, "filen-out:root"), null) }
+                app.prefs.grantBackupWriter(callerPkg, callerLabel)
+                val uri = DocumentsContract.buildTreeDocumentUri(FilenDocumentsProvider.AUTHORITY, id.value)
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+                val result = Intent().setData(uri).addFlags(flags).putExtra(GrantFolderActivity.EXTRA_FOLDER_NAME, name)
+                result.clipData = ClipData.newRawUri("Filen", uri)
+                setResult(Activity.RESULT_OK, result)
+                finish()
+            } catch (e: CancellationException) { throw e } catch (e: Throwable) { message = failMessage(e); busy = false }
+        }
+    }
+
+    companion object {
+        const val ACTION = "app.filenfiles.action.CREATE_SHARED_FOLDER"
+        const val EXTRA_NAME = "app.filenfiles.extra.NAME"
+    }
+}

@@ -511,7 +511,33 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
             val out = client.listOutShared(contact)
             (out.dirs.map { it.inner.uuid } + out.files.map { it.uuid }).map(String::lowercase).toSet().also { outShareCache.put(savedEmail, it) }
         }
-        ShareAnswer.Known(ShareRules.isShared(id, ids))
+        if (ShareRules.isShared(id, ids)) return@io ShareAnswer.Known(true)
+        if (ids.isEmpty()) return@io ShareAnswer.Known(false)
+        // Not shared itself: is a folder above it? (bounded walk; the folders' names and parents are cached)
+        val start = (parent as ParentUuid.Uuid).v1.takeIf { it != rootUuid }
+        val via = Ancestors.nearestShared(start, ids) { u ->
+            val e = dirCache[u] ?: run { personalDirItem(client.getDir(u)); dirCache[u]!! }
+            e.name to e.parent?.takeIf { it != rootUuid }
+        }
+        ShareAnswer.Known(false, via)
+    }
+
+    /**
+     * I4 F11: the folder [name] in the drive root that is shared with [email]: an existing one that is already shared with
+     * them, else a new one (named [name], or "[name] 2"... when a folder of that name exists that is not shared with them:
+     * an existing private folder is never shared by this call). Returns its id and name.
+     */
+    suspend fun ensureSharedFolder(name: String, email: String): Pair<ItemId, String> = io {
+        val contact = client.getContacts().firstOrNull { it.email.equals(email.trim(), true) } ?: error("That person is not a contact yet")
+        val rootAny = AnyNormalDir.Root(client.root())
+        val dirs = client.listDir(rootAny).dirs.map { personalDirItem(it) }
+        val sharedIds = client.listOutShared(contact).dirs.map { it.inner.uuid }.toSet()
+        dirs.firstOrNull { it.name.equals(name, true) && it.id.key in sharedIds }?.let { return@io it.id to it.name }
+        val use = FolderNames.unique(name, dirs.map { it.name })
+        val id = createFolder(ItemId("$P:$ROOT"), use)
+        outShareCache.clear()
+        sharePartner(id, email, false)
+        id to use
     }
 
     /**
