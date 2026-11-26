@@ -3,6 +3,27 @@
 Native Android file manager (Kotlin, Compose, Material 3) on the **official Filen Rust SDK** (`filen-sdk-rs`,
 `uniffi` feature). README.md has setup/build; this file has what a new session needs to keep going.
 
+## 2026-11-26: folder-sharing security review fixes (branch folder-sharing, local only)
+- **Stale parent links:** a fresh listing drops the links of children it no longer has (unless listed elsewhere); items the server
+  said are gone or unshared get a persisted "gone" mark and are not answered from the stored listing. Write-mode calls (open for
+  write, create, delete, rename, move) from an app with a persisted write tree grant re-check the parent chain from Filen one
+  level at a time; offline they are refused (IOException) rather than trusted to the stored map.
+- **Crawl limits:** parent map and gone marks are LRU (oldest dropped); a full top-down search for one shared id runs at most once
+  per 10 minutes (answer within that window: "gone" if the last search finished, "cannot tell" if it was cut off), at most 400
+  folders and 20 s, one search per id at a time (others wait for it), two searches at once overall. No lock is held across a listing.
+- **Partner names:** every Filen sheet shows "nick (email)"; nicknames lose bidi/control characters and are cut at 40. Other apps
+  (`partner_status`, PARTNER_NAME) still get the cleaned nickname only.
+- **F11 scan folder:** only the folder F11 itself created for that app and account (uuid kept in Prefs) is reused; any other
+  same-name folder gets "[name] 2". The sheet says "Use your shared folder ..." when reusing.
+- **Account change:** on sign-out, and when the signed-in account differs from the last one seen, the persisted grants Filen gave
+  the pinned apps (roots, F11 folders, backup folders) are revoked and the locked-reader/writer/asked lists and F11 records are
+  cleared. The apps ask again at the next partner setup. A session expiry alone keeps them.
+- **"Shared by me"** (`filen-out` for other apps) lists only shares with the saved partner; none without a partner. Filen's own
+  screen still lists all outgoing shares.
+- **Test-pin guard:** Gradle fails when `-PstackTestPackage` is set and any release task is requested, unless `-PallowTestPin=true`
+  is also given (developers only, test builds for the TEST phone). A test-pinned app logs one warning (`FilenTestPin`) at start.
+- **Tapjacking:** `filterTouchesWhenObscured` on the partner activities and their dialogs.
+
 ## 2026-11-25: 0.4.9 (code 16) - safe saving and data-loss fixes
 - Release notes: `RELEASE_NOTES_0.4.9.md`. SDK filen-rs `c93cedd` (0.5.35). One `.apk` per release now (`Filen-Files.apk`).
 - Before release: 128 unit tests; Opus release-gate review (one possible blocker, folder ids in `currentHead`, fixed; no

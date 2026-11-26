@@ -4,6 +4,19 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+// Release guard: a build that trusts a test package as a caller (-PstackTestPackage) must never be a release build.
+// Developers only: test builds for the TEST phone pass -PallowTestPin=true as well (docs/STATUS.md).
+run {
+    val pinned = !(project.findProperty("stackTestPackage") as String?).isNullOrBlank()
+    if (pinned && project.findProperty("allowTestPin") != "true") {
+        gradle.taskGraph.whenReady {
+            val release = allTasks.firstOrNull { it.project == project && it.name.contains("Release", ignoreCase = true) }
+            if (release != null) throw GradleException(
+                "-PstackTestPackage is set and a release task (${release.path}) is requested. A test-pinned build must not be released. " +
+                    "For a test build on the TEST phone add -PallowTestPin=true (developers only).")
+        }
+    }
+}
 android {
     namespace = "app.filenfiles"
     compileSdk = 37
