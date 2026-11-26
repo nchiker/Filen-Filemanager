@@ -29,6 +29,9 @@ object StackLink {
         "app.amipro.editor" to setOf("9a387c70c8c19a3bb29e9b02f18840f4b1bb18ac291983d2d0ec1c684670868a"),
     )
 
+    /** The packages Filen hands persisted folder grants to: the pinned apps and, in a test build, the test package. */
+    fun pinnedPackages(): Set<String> = (PINNED.keys + testPackage).filter { it.isNotEmpty() }.toSet()
+
     /** True when [uid] belongs to exactly one package and that package + its one signing certificate are pinned. */
     fun callerAllowed(context: Context, uid: Int): Boolean {
         // A caller from another Android user (the shell, a work profile) makes this throw: not pinned, so refused.

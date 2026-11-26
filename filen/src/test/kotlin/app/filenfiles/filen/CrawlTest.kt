@@ -62,4 +62,22 @@ class CrawlTest {
         SharedCrawl.search("root", "t", 100, 20_000, { t }) { f -> n++; if (f == "root") listOf(d("a"), d("a")) else listOf(d("root")) }
         assertEquals(2, n)
     }
+
+    // ---- write re-verification ----
+    private fun chain(vararg e: Pair<String, String>): (String) -> ChainCheck.Step { val m = e.toMap(); return { m[it]?.let(ChainCheck.Step::Up) ?: ChainCheck.Step.Top } }
+
+    @Test fun writeIsInsideWhenTheFreshChainReachesAGrantedFolder() {
+        assertEquals(ChainCheck.Verdict.INSIDE, ChainCheck.verify("c", setOf("t"), step = chain("c" to "b", "b" to "t")))
+        assertEquals(ChainCheck.Verdict.INSIDE, ChainCheck.verify("t", setOf("t"), step = chain()))
+    }
+    @Test fun anItemMovedOutsideTheGrantIsOutside() {
+        assertEquals(ChainCheck.Verdict.OUTSIDE, ChainCheck.verify("c", setOf("t"), step = chain("c" to "other")))
+    }
+    @Test fun goneIsReportedAndOfflineRefuses() {
+        assertEquals(ChainCheck.Verdict.GONE, ChainCheck.verify("c", setOf("t")) { ChainCheck.Step.Gone })
+        assertFailsWith<java.io.IOException> { ChainCheck.verify("c", setOf("t")) { throw java.io.IOException("offline") } }
+    }
+    @Test fun aLoopEndsOutside() {
+        assertEquals(ChainCheck.Verdict.OUTSIDE, ChainCheck.verify("a", setOf("t"), 10, chain("a" to "b", "b" to "a")))
+    }
 }

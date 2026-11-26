@@ -73,3 +73,33 @@ object SharedCrawl {
         return r ?: Result.Incomplete
     }
 }
+
+/**
+ * Write-mode calls under a persisted tree grant do not trust the stored parent map: the chain from the item up to a
+ * granted folder is confirmed one step at a time ([step] asks Filen) and the call is refused when it cannot be
+ * confirmed (a [step] that throws, for example offline, propagates: the write is refused, never allowed on stale data).
+ */
+object ChainCheck {
+    sealed interface Step {
+        data class Up(val parent: String) : Step
+        /** The item is a root: nothing above it. */
+        data object Top : Step
+        /** The server confirms the item or its share is gone. */
+        data object Gone : Step
+    }
+    enum class Verdict { INSIDE, OUTSIDE, GONE }
+
+    /** INSIDE when [start] is one of [trees] or reaches one going up; OUTSIDE at a root or after [maxSteps]. */
+    inline fun verify(start: String, trees: Set<String>, maxSteps: Int = 64, step: (String) -> Step): Verdict {
+        var cur = start
+        repeat(maxSteps) {
+            if (cur in trees) return Verdict.INSIDE
+            when (val s = step(cur)) {
+                is Step.Up -> cur = s.parent
+                Step.Top -> return Verdict.OUTSIDE
+                Step.Gone -> return Verdict.GONE
+            }
+        }
+        return if (cur in trees) Verdict.INSIDE else Verdict.OUTSIDE
+    }
+}

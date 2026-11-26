@@ -41,6 +41,7 @@ import app.filenfiles.filen.DocsRules
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.FilenStorageProvider
 import app.filenfiles.filen.StoredListing
+import app.filenfiles.filen.ChainCheck
 import app.filenfiles.filen.LocalCache
 import app.filenfiles.filen.friendlyOrNull
 import kotlinx.coroutines.CancellationException
@@ -192,6 +193,41 @@ class FilenDocumentsProvider : DocumentsProvider() {
             documentId == top || isDescendant(top, documentId)
         } else DocumentsContract.getDocumentId(grant) == documentId
     }.getOrDefault(false)
+
+    /**
+     * A write-mode call (open for write, create, delete, rename, move) from an app that holds a persisted write grant on
+     * a folder: the parent chain from [documentId] up to a granted folder is confirmed by Filen now (one lookup per
+     * level), never taken from the stored parent map, which can be stale. When Filen cannot be asked (offline) the write
+     * is refused (IOException) rather than allowed on stale data. Callers without such a grant (this app, the system
+     * picker) are not affected. Must run on the binder thread: it reads the caller's identity.
+     */
+    private fun requireFreshChain(documentId: String) {
+        val ctx = context!!
+        val uid = Binder.getCallingUid(); val pid = Binder.getCallingPid()
+        if (uid == Process.myUid()) return
+        if (ctx.checkPermission(Manifest.permission.MANAGE_DOCUMENTS, pid, uid) == PackageManager.PERMISSION_GRANTED) return
+        val trees = HashSet<String>(); val docs = HashSet<String>()
+        for (g in ctx.contentResolver.outgoingPersistedUriPermissions) {
+            if (!g.isWritePermission || g.uri.authority != AUTHORITY) continue
+            if (ctx.checkUriPermission(g.uri, pid, uid, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != PackageManager.PERMISSION_GRANTED) continue
+            runCatching { if (DocumentsContract.isTreeUri(g.uri)) trees.add(DocumentsContract.getTreeDocumentId(g.uri)) else docs.add(DocumentsContract.getDocumentId(g.uri)) }
+        }
+        if (trees.isEmpty() || documentId in docs) return // not under a persisted tree grant
+        var start = documentId
+        if (start.startsWith(PENDING_PREFIX)) start = pendingParent(start) ?: throw FileNotFoundException(documentId) // our own, not yet uploaded
+        val verdict = ChainCheck.verify(start, trees) { cur ->
+            when (val r = io { blocking { app.filen.verifiedParent(ItemId(cur)) } }) {
+                is FilenStorageProvider.ParentLookup.Found -> { parents[cur] = r.parent.value; ChainCheck.Step.Up(r.parent.value) }
+                FilenStorageProvider.ParentLookup.Top -> ChainCheck.Step.Top
+                FilenStorageProvider.ParentLookup.Gone -> ChainCheck.Step.Gone
+            }
+        }
+        when (verdict) {
+            ChainCheck.Verdict.INSIDE -> Unit
+            ChainCheck.Verdict.GONE -> throw FileNotFoundException(documentId)
+            ChainCheck.Verdict.OUTSIDE -> throw SecurityException("$documentId is no longer inside the folder this app was given")
+        }
+    }
 
     private fun idOf(documentId: String): ItemId {
         val id = ItemId(documentId)
@@ -353,7 +389,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         var failure: Throwable? = null
         var listing: Listing? = null
         try {
-            listing = blocking { app.router.list(parent) }
+            listing = blocking { if (parent.scheme == "filen-out") app.filen.listForProvider(parent) else app.router.list(parent) }
         } catch (e: OperationCanceledException) { throw e
         } catch (e: Throwable) { failure = e }
         var stored: StoredListing? = null
@@ -364,11 +400,12 @@ class FilenDocumentsProvider : DocumentsProvider() {
                 else runCatching { blocking { app.filen.parentLookup(parent) } is FilenStorageProvider.ParentLookup.Gone }.getOrNull()
             stored = docState.listing(parent.value)
             when (DocsRules.decideList(kind, gone, stored != null || pendingRowsIn(parent).isNotEmpty())) {
-                DocsRules.ListOutcome.NOT_FOUND -> throw FileNotFoundException(parentDocumentId)
+                DocsRules.ListOutcome.NOT_FOUND -> { if (parent.scheme != "filen") docState.markGone(parent.value); throw FileNotFoundException(parentDocumentId) }
                 DocsRules.ListOutcome.AUTH -> throw authError("Sign in to Filen")
                 DocsRules.ListOutcome.IO -> io<Unit> { throw failure }
                 else -> {
-                    listing = Listing(Folder(parent, "", Origin.FILEN_PERSONAL), stored?.items ?: emptyList(), emptyList())
+                    // An item the server last said is gone is not in an offline answer either.
+                    listing = Listing(Folder(parent, "", Origin.FILEN_PERSONAL), stored?.items?.filter { !docState.isGone(it.id.value) } ?: emptyList(), emptyList())
                     android.util.Log.d("FilenDebug", "Offline: answering a listing from the stored copy and the upload queue")
                 }
             }
@@ -379,7 +416,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
         c.setNotificationUri(context!!.contentResolver, android.provider.DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId))
         c.extras = android.os.Bundle().apply { putBoolean(EXTRA_FRESH, fresh); putString(EXTRA_ACCOUNT, app.filen.accountId ?: "") }
-        items.forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
+        // Parent links come from listings the server just gave; an offline (stored) answer never rewrites them.
+        items.forEach { if (fresh) parents[it.id.value] = parentDocumentId; c.addItem(it) }
         // Just-finished uploads that Filen's listing doesn't show yet (it can lag a few seconds): no gap for the client.
         app.transfers.recentUploads.missingFrom(parent, items.map { it.id }).forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
         pendingRowsIn(parent).forEach { c.addPending(it) }
@@ -451,6 +489,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
             return openDocument(real, mode, signal) // uploaded meanwhile: the real document
         }
         requireSignedIn(doc = documentId.takeIf { mode == "r" }) // writes never pass while locked
+        if (mode != "r") requireFreshChain(documentId)
         val (item, trashed) = current(documentId, signal) ?: throw FileNotFoundException(documentId)
         if (item.isDirectory) throw FileNotFoundException("$documentId is a folder")
         if (mode != "r") return openSaveOver(documentId, item, trashed, mode, caller, signal)
@@ -528,6 +567,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         // While locked only an app that got this folder from GrantFolderActivity may add FILES to it (no folders).
         requireSignedIn(doc = parentDocumentId.takeIf { mimeType != Document.MIME_TYPE_DIR }, write = true)
         val parent = idOf(parentDocumentId)
+        requireFreshChain(parentDocumentId)
         val w = app.router.writable(parent)?.takeIf { it.canWrite(parent) } ?: throw SecurityException("This folder is read-only")
         if (displayName.isBlank() || '/' in displayName) throw IllegalArgumentException("Invalid name")
         if (mimeType == Document.MIME_TYPE_DIR) {
@@ -567,6 +607,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
         requireSignedIn(doc = documentId, write = true) // to the Filen trash; while locked only for a GrantFolderActivity app
         pending.remove(documentId)?.let { it.dir.deleteRecursively(); return }
         app.transfers.byDocId(documentId)?.let { t -> app.transfers.cancel(t.id); app.transfers.dismiss(t.id); notifyParent(t.parent.value); return }
+        requireFreshChain(documentId)
         val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be deleted")
         io { blocking { w.trash(item) } } // recoverable: goes to the Filen trash
@@ -576,6 +617,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun renameDocument(documentId: String, displayName: String): String? {
         @Suppress("NAME_SHADOWING") val documentId = real(documentId)
         requireSignedIn()
+        requireFreshChain(documentId)
         val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be renamed")
         io { blocking { w.rename(item, displayName) } }
@@ -586,6 +628,7 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun moveDocument(sourceDocumentId: String, sourceParentDocumentId: String, targetParentDocumentId: String): String {
         @Suppress("NAME_SHADOWING") val sourceDocumentId = real(sourceDocumentId)
         requireSignedIn()
+        requireFreshChain(sourceDocumentId); requireFreshChain(targetParentDocumentId)
         val item = current(sourceDocumentId)?.first ?: throw FileNotFoundException(sourceDocumentId)
         val w = app.router.modifier(item) ?: throw SecurityException("This item can't be moved")
         val target = idOf(targetParentDocumentId)
