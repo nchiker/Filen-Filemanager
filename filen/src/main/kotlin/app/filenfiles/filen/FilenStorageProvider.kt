@@ -74,6 +74,12 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     @Volatile var partnerEmail: () -> String? = { null }
     /** A full top-down search for one id runs at most once per 10 minutes; see [CrawlGuard]. */
     private val crawlGuard = CrawlGuard()
+    /** At most 6 full crawls per hour across all ids; then "cannot tell" (never "gone"). */
+    private val crawlBudget = CrawlBudget()
+    /** Outgoing ids another app may reach: only what a partner-scoped listing showed (I4 F4/F2). */
+    private val outScope = OutScope()
+    /** Parent links Filen confirmed in the last 60 s (reads under a persisted tree grant). */
+    val verifiedParents = VerifiedParents()
     /** Guards only the in-flight table (never held across a network call). */
     private val registryLock = Any()
     private val inflight = HashMap<String, kotlinx.coroutines.CompletableDeferred<Boolean>>()
@@ -275,11 +281,15 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
                     same.first().copy(sharedWith = same.mapNotNull { it.sharedWith }.distinct().joinToString(", ").ifEmpty { null })
                 }
             }
+            if (scheme == OUT && partnerOnly) outScope.noteRoot(items.map { it.id.value })
             val title = rootTitle(scheme)
             return Listing(Folder(folder, title, originOf(scheme)), items, listOf(Crumb(folder, title)))
         }
         // After a process restart nested shared dirs are unknown: find them again (a confirmed miss = no longer shared).
-        val node = (sharedDirs[folder.value] ?: run { ensureShared(folder); sharedDirs[folder.value] })
+        // A partner-scoped caller may only open an outgoing folder the partner listing showed.
+        val scoped = scheme == OUT && partnerOnly
+        val node = (sharedDirs[folder.value]?.takeIf { !scoped || outScope.allows(folder.value) }
+            ?: run { ensureShared(folder); sharedDirs[folder.value]?.takeIf { !scoped || outScope.allows(folder.value) } })
             ?: throw java.io.FileNotFoundException("This folder is no longer shared")
         val res = timed("listSharedDir") { client.listSharedDir(node.any, node.role) }
         val items = res.dirs.map { d ->
@@ -288,6 +298,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         } + res.files.map { f ->
             sharedFileItem(AnyFile.File(f), f.uuid, f.size, f.timestamp, f.meta, node.role, node.write, scheme, folder.value)
         }
+        if (scoped) outScope.noteChildren(folder.value, items.map { it.id.value })
         return Listing(Folder(folder, node.name, originOf(scheme)), items, sharedTrail(folder.value, scheme))
     }
 
@@ -303,15 +314,20 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         var cur = sharedParents[target.value]
         var guard = 0
         while (cur != null && cur != rootId && sharedDirs[cur] == null && guard++ < 64) { chain.addFirst(cur); cur = sharedParents[cur] }
-        listShared(ItemId(rootId))
-        for (dir in chain) { if (sharedDirs[dir] == null) return; listShared(ItemId(dir)) }
+        // Outgoing shares are only ever registered by the partner-scoped listing here (a caller who knows an id must not
+        // be able to make this register shares with other contacts).
+        val po = target.scheme == OUT
+        listShared(ItemId(rootId), partnerOnly = po)
+        for (dir in chain) { if (sharedDirs[dir] == null) return; listShared(ItemId(dir), partnerOnly = po) }
         val parent = sharedParents[target.value]
         if (parent != null && parent != rootId && sharedDirs[target.value] == null && sharedFiles[target.value] == null && sharedDirs[parent] != null) {
-            listShared(ItemId(parent))
+            listShared(ItemId(parent), partnerOnly = po)
         }
     }
 
-    private fun registered(id: ItemId) = sharedDirs[id.value] != null || sharedFiles[id.value] != null
+    /** Known to this process, and for an outgoing id also inside the partner's scope (see [OutScope]). */
+    private fun registered(id: ItemId) =
+        (sharedDirs[id.value] != null || sharedFiles[id.value] != null) && (id.scheme != OUT || outScope.allows(id.value))
 
     /**
      * Makes sure the shared item [target] is registered (so it can be listed or opened) after a process restart.
@@ -364,14 +380,25 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
         val rootId = "${target.scheme}:$ROOT"
         return crawlSlots.withPermit {
-            val r = SharedCrawl.search(rootId, target.value, MAX_SEARCH_FOLDERS, MAX_SEARCH_MS) { f ->
-                listShared(ItemId(f), partnerOnly = true).items.map { SharedCrawl.Child(it.id.value, it.isDirectory) }
-            }
+            if (!crawlBudget.tryTake()) throw java.io.IOException("Searched too often; try again later") // cannot tell, never gone
+            var failed = false
+            val r = try {
+                SharedCrawl.search(rootId, target.value, MAX_SEARCH_FOLDERS, MAX_SEARCH_MS) { f ->
+                    try { listShared(ItemId(f), partnerOnly = true).items.map { SharedCrawl.Child(it.id.value, it.isDirectory) } }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: java.io.FileNotFoundException) { failed = true; emptyList() } // a folder that vanished mid-search: carry on, but the result is not clean
+                    catch (e: Exception) { failed = true; throw e }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (e: Exception) { crawlGuard.note(target.value, CrawlGuard.Outcome.INCOMPLETE, clean = false); throw e }
             when (r) {
                 is SharedCrawl.Result.Found -> { crawlGuard.forget(target.value); r.parent }
-                SharedCrawl.Result.NotFound -> { crawlGuard.note(target.value, CrawlGuard.Outcome.NOT_FOUND); null }
+                SharedCrawl.Result.NotFound -> {
+                    if (failed) { crawlGuard.note(target.value, CrawlGuard.Outcome.INCOMPLETE, clean = false); throw java.io.IOException("A shared folder could not be read; cannot tell") }
+                    crawlGuard.note(target.value, CrawlGuard.Outcome.NOT_FOUND, clean = true); null
+                }
                 SharedCrawl.Result.Incomplete -> {
-                    crawlGuard.note(target.value, CrawlGuard.Outcome.INCOMPLETE)
+                    crawlGuard.note(target.value, CrawlGuard.Outcome.INCOMPLETE, clean = false)
                     throw java.io.IOException("Too many shared folders to search")
                 }
             }
@@ -895,7 +922,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         }
         loadedAccount = null; rootCache = null
         listOf(dirCache, personalFiles, personalDirObjs, sharedDirs, sharedFiles, trashedFiles, trashedDirs, outRoots, contactMap).forEach { it.clear() }
-        docState.clear(); outShareCache.clear(); crawlGuard.clear()
+        docState.clear(); outShareCache.clear(); crawlGuard.clear(); crawlBudget.clear(); outScope.clear(); verifiedParents.clear()
         indexFile().delete()
         pins.wipe()
     }

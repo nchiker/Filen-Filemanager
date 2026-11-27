@@ -14,21 +14,85 @@ class CrawlGuard(
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     enum class Outcome { NOT_FOUND, INCOMPLETE }
-    private class Entry(val at: Long, val outcome: Outcome)
+    private class Entry(val at: Long, val outcome: Outcome, val ttl: Long)
     private val map = LinkedHashMap<String, Entry>(16, 0.75f, true)
 
     /** The outcome of a search for [id] that ran less than the minimum gap ago, else null (a new search may run). */
-    @Synchronized fun recent(id: String): Outcome? = map[id]?.takeIf { now() - it.at in 0 until minGapMs }?.outcome
+    @Synchronized fun recent(id: String): Outcome? = map[id]?.takeIf { now() - it.at in 0 until it.ttl }?.outcome
 
-    @Synchronized fun note(id: String, outcome: Outcome) {
-        map.remove(id); map[id] = Entry(now(), outcome)
+    /**
+     * Remembers a search result. Only a clean, complete crawl ([clean], the default for NOT_FOUND) is kept for the full
+     * gap; anything cut off, or any crawl that hit a failing folder (clean = false), is kept at most [SHORT_MS].
+     */
+    @Synchronized fun note(id: String, outcome: Outcome, clean: Boolean = outcome == Outcome.NOT_FOUND) {
+        map.remove(id); map[id] = Entry(now(), outcome, if (clean) minGapMs else minOf(minGapMs, SHORT_MS))
         val it = map.entries.iterator()
         while (map.size > maxEntries && it.hasNext()) { it.next(); it.remove() }
     }
 
     @Synchronized fun forget(id: String) { map.remove(id) }
+
+    companion object { const val SHORT_MS = 2 * 60_000L }
     @Synchronized fun clear() = map.clear()
     @Synchronized fun size() = map.size
+}
+
+/**
+ * A global budget of full crawls: at most [max] per [windowMs] across all ids, so many different made-up ids cannot keep
+ * this phone crawling. When it is spent the answer is "cannot tell", never "gone".
+ */
+class CrawlBudget(
+    private val max: Int = 6,
+    private val windowMs: Long = 60 * 60_000L,
+    private val now: () -> Long = System::currentTimeMillis,
+) {
+    private val starts = ArrayDeque<Long>()
+    /** True (and counted) when a crawl may start now. */
+    @Synchronized fun tryTake(): Boolean {
+        val t = now()
+        while (starts.isNotEmpty() && (t - starts.first() >= windowMs || t < starts.first())) starts.removeFirst()
+        if (starts.size >= max) return false
+        starts.addLast(t); return true
+    }
+    @Synchronized fun clear() = starts.clear()
+}
+
+/**
+ * Which outgoing ("Shared by me") ids another app may reach: only what a partner-scoped listing showed, from the root
+ * down. An id from the full own-use listing (shares with other contacts) is never in it.
+ */
+class OutScope {
+    private val ids = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** The partner-scoped root listing: replaces everything (the partner may have changed). */
+    fun noteRoot(children: Collection<String>) { ids.clear(); ids.addAll(children) }
+    /** A partner-scoped listing of [folder]: its children are in scope only when the folder is. */
+    fun noteChildren(folder: String, children: Collection<String>) { if (folder in ids) ids.addAll(children) }
+    fun allows(id: String) = id in ids
+    fun clear() = ids.clear()
+}
+
+/** Short-lived memory of parent links that Filen confirmed just now (I4 F1: reads under a persisted tree grant). */
+class VerifiedParents(
+    private val ttlMs: Long = 60_000L,
+    private val maxEntries: Int = 2_000,
+    private val now: () -> Long = System::currentTimeMillis,
+) {
+    private class E(val parent: String, val at: Long)
+    private val map = LinkedHashMap<String, E>(16, 0.75f, true)
+    @Synchronized fun get(id: String): String? = map[id]?.takeIf { now() - it.at in 0 until ttlMs }?.parent
+    @Synchronized fun put(id: String, parent: String) {
+        map.remove(id); map[id] = E(parent, now())
+        val it = map.entries.iterator()
+        while (map.size > maxEntries && it.hasNext()) { it.next(); it.remove() }
+    }
+    @Synchronized fun clear() = map.clear()
+}
+
+/** I4 F1 offline rule: a stored parent link may stand in for a check only when it came from a fresh listing and is not gone. */
+object OfflineRule {
+    const val MAX_AGE_MS = 24 * 60 * 60_000L
+    fun linkTrusted(listingSavedAt: Long?, now: Long, gone: Boolean, maxAgeMs: Long = MAX_AGE_MS): Boolean =
+        !gone && listingSavedAt != null && now - listingSavedAt in 0..maxAgeMs
 }
 
 /** Top-down search of shared folders, bounded in folders and in wall time. */

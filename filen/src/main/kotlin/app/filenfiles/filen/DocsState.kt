@@ -100,10 +100,15 @@ class DocsState(
             val ids = HashSet<String>(items.size * 2)
             items.forEach { ids.add(it.id.value) }
             if (before != null) {
+                // Ids held by the other stored listings, built once (not a scan of every listing per removed child).
+                var elsewhere: HashSet<String>? = null
                 for (old in before.items) {
                     val id = old.id.value
                     if (id in ids || parents[id] != folder) continue
-                    if (listings.any { (k, l) -> k != folder && l.items.any { it.id.value == id } }) continue
+                    val other = elsewhere ?: HashSet<String>().also { h ->
+                        for ((k, l) in listings) if (k != folder) l.items.forEach { h.add(it.id.value) }
+                    }.also { elsewhere = it }
+                    if (id in other) continue
                     parents.remove(id)
                 }
             }
@@ -143,6 +148,18 @@ class DocsState(
             parents.remove(id)
             changed()
         }
+    }
+
+    /**
+     * The parent link of [id] when it is backed by a stored listing of that parent saved within [maxAgeMs] that contains
+     * [id], and [id] is not marked gone (the offline rule of I4 F1); otherwise null.
+     */
+    fun freshParent(id: String, maxAgeMs: Long = OfflineRule.MAX_AGE_MS): String? = synchronized(lock) {
+        if (!ensure()) return null
+        val p = parents[id] ?: return null
+        val l = listings[p]
+        if (!OfflineRule.linkTrusted(l?.savedAt, now(), id in gone, maxAgeMs)) return null
+        if (l!!.items.none { it.id.value == id }) null else p
     }
 
     fun isGone(id: String): Boolean = synchronized(lock) { ensure() && id in gone }
