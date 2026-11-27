@@ -30,4 +30,25 @@ class LockedAccessTest {
         assertEquals("“Shared with me”", LockedAccess.scope(inRoot))
         assertEquals("one folder", LockedAccess.scope(scans))
     }
+
+    private fun tree(u: String) = "content://docs/tree/filen%3A$u"
+
+    @Test fun rebuildFromF11AndGrantedFolders() {
+        val r = LockedAccess.rebuildWriters(mapOf("stack" to "u1"), mapOf("stack" to setOf(tree("b1")), "ami" to setOf(tree("b2")))) { tree(it) }
+        assertEquals(setOf(LockedAccess.entry("stack", tree("u1")), LockedAccess.entry("stack", tree("b1")), LockedAccess.entry("ami", tree("b2"))), r)
+        assertTrue(LockedAccess.rebuildWriters(emptyMap(), emptyMap()) { tree(it) }.isEmpty()) // nothing recorded: nothing invented
+    }
+
+    @Test fun refusedWriteIsRememberedAndAskedOnce() {
+        val t = tree("u1"); val e = LockedAccess.entry("stack", t)
+        var pending = LockedAccess.noteRefusedWrites(emptySet(), emptySet(), emptySet(), listOf("stack"), listOf(t))
+        assertEquals(setOf(e), pending)
+        assertEquals(e, LockedAccess.nextWriteAsk(pending, emptySet()))
+        assertEquals(null, LockedAccess.nextWriteAsk(pending, setOf(e))) // answered: never again
+        assertEquals(emptySet<String>(), LockedAccess.noteRefusedWrites(emptySet(), emptySet(), setOf(e), listOf("stack"), listOf(t))) // "Not now" is not re-remembered
+        assertEquals(emptySet<String>(), LockedAccess.noteRefusedWrites(emptySet(), setOf(e), emptySet(), listOf("stack"), listOf(t))) // already allowed
+        pending = LockedAccess.noteRefusedWrites(pending, emptySet(), emptySet(), listOf("stack"), listOf(t))
+        assertEquals(1, pending.size) // repeated refusals stay one entry
+        assertEquals(2, LockedAccess.noteRefusedWrites(pending, emptySet(), emptySet(), listOf("stack"), listOf(tree("u2"))).size) // another tree is its own entry
+    }
 }

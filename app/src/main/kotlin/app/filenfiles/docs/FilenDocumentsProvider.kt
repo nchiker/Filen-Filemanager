@@ -182,7 +182,12 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }.map { it.uri.toString() }
         if (trees.isEmpty()) return false
         val prefs = app.prefs
-        if (write) return trees.any { LockedAccess.allows(prefs.lockedReaders, pkgs, it) && LockedAccess.allows(prefs.lockedWriters, pkgs, it) }
+        if (write) {
+            if (trees.any { LockedAccess.allows(prefs.lockedReaders, pkgs, it) && LockedAccess.allows(prefs.lockedWriters, pkgs, it) }) return true
+            // Refused: a pinned app (Stack) is remembered per (package, tree); the owner is asked once after the next unlock.
+            if (StackLink.callerAllowed(ctx, uid)) prefs.noteRefusedWrite(pkgs, trees)
+            return false
+        }
         if (trees.any { LockedAccess.allows(prefs.lockedReaders, pkgs, it) }) return true
         LockedAccess.firstUnasked(prefs.lockedReadersAsked, pkgs, trees)?.let { e ->
             android.os.Handler(Looper.getMainLooper()).post { app.appLock.askReader = e }

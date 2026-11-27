@@ -113,6 +113,17 @@ fun SettingsScreen(env: AppEnv) {
                 if (prefs.appLock) {
                     Text("Lock", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
                     lockOptions.forEach { (ms, label) -> DialogChoice(label, prefs.lockTimeoutMs == ms) { prefs.updateLockTimeout(ms) } }
+                    (prefs.lockedWritePending + prefs.lockedWriteAsked).sorted().forEach { entry ->
+                        val name = prefs.lockedReaderLabel(LockedAccess.pkgOf(entry)) ?: appLabel(ctx, LockedAccess.pkgOf(entry))
+                        val state = if (entry in prefs.lockedWriters) "allowed" else if (entry in prefs.lockedWriteAsked) "not allowed" else "will ask you"
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("$name adding files to one folder while locked", fontSize = 16.sp)
+                                Text(state.replaceFirstChar { it.uppercase() }, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            TextButton({ prefs.removeWriteRequest(entry) }) { Text("Remove") }
+                        }
+                    }
                     prefs.lockedReadersAsked.sorted().forEach { entry ->
                         val pkg = LockedAccess.pkgOf(entry); val tree = LockedAccess.treeOf(entry)
                         val name = prefs.lockedReaderLabel(pkg) ?: appLabel(ctx, pkg)

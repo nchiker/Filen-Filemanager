@@ -457,6 +457,7 @@ class CreateSharedFolderActivity : PartnerActivity() {
                 runCatching { contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, "filen-out:root"), null) }
                 val uri = DocumentsContract.buildTreeDocumentUri(FilenDocumentsProvider.AUTHORITY, id.value)
                 app.prefs.grantBackupWriter(callerPkg, uri.toString(), callerLabel) // only this folder, while locked
+                app.prefs.recordGrantedFolder(callerPkg, uri.toString())
                 val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
                 val result = Intent().setData(uri).addFlags(flags).putExtra(GrantFolderActivity.EXTRA_FOLDER_NAME, name)

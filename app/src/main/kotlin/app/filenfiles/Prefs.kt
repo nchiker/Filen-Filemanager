@@ -44,7 +44,25 @@ class Prefs(context: Context) {
     fun updateLockTimeout(ms: Long) { lockTimeoutMs = ms; sp.edit().putLong("lockTimeoutMs", ms).apply() }
     fun updateSecureScreen(v: Boolean) { secureScreen = v; sp.edit().putBoolean("secureScreen", v).apply() }
     // One-time migration: the old per-package allowlists are dropped (see LockedAccess.LEGACY_KEYS).
-    init { if (LockedAccess.LEGACY_KEYS.any { sp.contains(it) }) sp.edit().apply { LockedAccess.LEGACY_KEYS.forEach { remove(it) } }.apply() }
+    // The per-(package, tree) writer and reader entries are rebuilt once from the F11 records and the recorded folder grants;
+    // anything that cannot be rebuilt is asked once when a locked write from that app is refused (see lockedWritePending).
+    init {
+        val e = sp.edit()
+        if (LockedAccess.LEGACY_KEYS.any { sp.contains(it) }) LockedAccess.LEGACY_KEYS.forEach { e.remove(it) }
+        if (!sp.getBoolean("lockedWritersRebuilt", false)) {
+            val all = sp.all
+            val f11 = all.filter { it.key.startsWith("f11:") && it.value is String }.entries.associate { it.key.removePrefix("f11:").substringAfter(':') to it.value as String }
+            val granted = all.filter { it.key.startsWith("gfa:") }.entries.associate { it.key.removePrefix("gfa:") to ((it.value as? Set<*>)?.filterIsInstance<String>()?.toSet() ?: emptySet()) }
+            val rebuilt = LockedAccess.rebuildWriters(f11, granted) { android.provider.DocumentsContract.buildTreeDocumentUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY, "filen:$it").toString() }
+            if (rebuilt.isNotEmpty()) {
+                e.putStringSet("lockedWriteGrants", (sp.getStringSet("lockedWriteGrants", null).orEmpty() + rebuilt))
+                e.putStringSet("lockedGrants", (sp.getStringSet("lockedGrants", null).orEmpty() + rebuilt))
+                e.putStringSet("lockedGrantsAsked", (sp.getStringSet("lockedGrantsAsked", null).orEmpty() + rebuilt))
+            }
+            e.putBoolean("lockedWritersRebuilt", true)
+        }
+        e.apply()
+    }
     /** (package, tree URI) entries the owner lets read that one tree while the app is locked (see [LockedAccess] and FilenDocumentsProvider). */
     var lockedReaders by mutableStateOf(sp.getStringSet("lockedGrants", null)?.toSet() ?: emptySet()); private set
     /** (package, tree URI) entries the owner was already asked about (allowed or "Not now"); listed in Settings, never asked again. */
@@ -69,6 +87,34 @@ class Prefs(context: Context) {
         sp.edit().putStringSet("lockedWriteGrants", lockedWriters).apply()
         setLockedReader(pkg, tree, true, label)
     }
+    /** GrantFolderActivity records the folder it granted (so the entry can be rebuilt later); F11 is recorded by its `f11:` key. */
+    fun recordGrantedFolder(pkg: String, tree: String) {
+        sp.edit().putStringSet("gfa:$pkg", sp.getStringSet("gfa:$pkg", null).orEmpty() + tree).apply()
+    }
+    /** (package, tree) entries whose locked write was refused and who the owner was not yet asked about. */
+    var lockedWritePending by mutableStateOf(sp.getStringSet("lockedWritePending", null)?.toSet() ?: emptySet()); private set
+    /** (package, tree) entries the owner was asked about writing (allowed or "Not now"); never asked again. */
+    var lockedWriteAsked by mutableStateOf(sp.getStringSet("lockedWriteAsked", null)?.toSet() ?: emptySet()); private set
+    private fun saveWritePending() { sp.edit().putStringSet("lockedWritePending", lockedWritePending).putStringSet("lockedWriteAsked", lockedWriteAsked).apply() }
+    @Synchronized fun noteRefusedWrite(pkgs: Collection<String>, trees: List<String>) {
+        val n = LockedAccess.noteRefusedWrites(lockedWritePending, lockedWriters, lockedWriteAsked, pkgs, trees)
+        if (n != lockedWritePending) { lockedWritePending = n; saveWritePending() }
+    }
+    /** The owner's answer to "keep adding files": Allow also lets that app read that one folder while locked. */
+    fun answerWrite(pkg: String, tree: String, allowed: Boolean, label: String) {
+        val e = LockedAccess.entry(pkg, tree)
+        lockedWritePending = lockedWritePending - e; lockedWriteAsked = lockedWriteAsked + e
+        saveWritePending()
+        if (allowed) grantBackupWriter(pkg, tree, label)
+        else setLockedReader(pkg, tree, false, label)
+    }
+    /** Settings: forget a remembered or answered write request entirely (it may be asked again if refused again). */
+    fun removeWriteRequest(entry: String) {
+        lockedWritePending = lockedWritePending - entry; lockedWriteAsked = lockedWriteAsked - entry
+        lockedWriters = lockedWriters - entry; lockedReaders = lockedReaders - entry
+        sp.edit().putStringSet("lockedWriteGrants", lockedWriters).putStringSet("lockedGrants", lockedReaders).apply()
+        saveWritePending()
+    }
     /**
      * The partner the owner chose in the partner setup (Stack folder sharing). Tied to the account that chose it, so a
      * different account never inherits it. [account] is the opaque account id.
@@ -81,9 +127,9 @@ class Prefs(context: Context) {
     }
     /** Forgets which apps may read/write while locked (account change, sign-out). Settings then lists nothing until they ask again. */
     fun clearLockedAccess() {
-        lockedReaders = emptySet(); lockedWriters = emptySet(); lockedReadersAsked = emptySet()
-        val e = sp.edit().remove("lockedGrants").remove("lockedWriteGrants").remove("lockedGrantsAsked")
-        sp.all.keys.filter { it.startsWith("readerLabel:") || it.startsWith("f11:") }.forEach { e.remove(it) }
+        lockedReaders = emptySet(); lockedWriters = emptySet(); lockedReadersAsked = emptySet(); lockedWritePending = emptySet(); lockedWriteAsked = emptySet()
+        val e = sp.edit().remove("lockedWritePending").remove("lockedWriteAsked").remove("lockedGrants").remove("lockedWriteGrants").remove("lockedGrantsAsked")
+        sp.all.keys.filter { it.startsWith("readerLabel:") || it.startsWith("f11:") || it.startsWith("gfa:") }.forEach { e.remove(it) }
         e.apply()
     }
     /**

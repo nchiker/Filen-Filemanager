@@ -6,13 +6,36 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import app.filenfiles.FilesApp
+import androidx.compose.runtime.getValue
 import app.filenfiles.LockedAccess
+import app.filenfiles.core.ItemId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** The app's name as the owner knows it ("Finance"); falls back to the package name if Android won't tell us. */
 fun appLabel(ctx: Context, pkg: String): String = runCatching {
     val pm = ctx.packageManager
     pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
 }.getOrDefault(pkg)
+
+/** Asked once per (app, folder) after unlocking when a pinned app's locked write was refused (see Prefs.noteRefusedWrite). */
+@Composable
+fun LockedWriterDialog(app: FilesApp, entry: String) {
+    val ctx = LocalContext.current
+    val pkg = LockedAccess.pkgOf(entry); val tree = LockedAccess.treeOf(entry)
+    val name = appLabel(ctx, pkg)
+    val folder by androidx.compose.runtime.produceState("this folder", tree) {
+        value = runCatching { withContext(Dispatchers.IO) { app.router.stat(ItemId(LockedAccess.treeDocId(tree))) }?.name }.getOrNull() ?: "this folder"
+    }
+    fun answer(allow: Boolean) = app.prefs.answerWrite(pkg, tree, allow, name)
+    AlertDialog(
+        onDismissRequest = { }, // not answered: stays remembered and is asked again next time
+        title = { Text("Let $name keep adding files to “$folder” while Filen Files is locked?") },
+        text = { Text("$name can then add files to and remove files from that folder without unlocking Filen Files. Nothing else in your Filen.") },
+        confirmButton = { TextButton({ answer(true) }) { Text("Allow") } },
+        dismissButton = { TextButton({ answer(false) }) { Text("Not now") } },
+    )
+}
 
 /**
  * Asked once per (app, folder), right after unlocking, when an app holding a grant the owner gave it was refused while locked

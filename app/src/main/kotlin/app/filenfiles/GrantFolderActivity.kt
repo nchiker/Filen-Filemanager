@@ -124,6 +124,7 @@ class GrantFolderActivity : FragmentActivity() {
             }
             val uri = DocumentsContract.buildTreeDocumentUri(FilenDocumentsProvider.AUTHORITY, id.value)
             app.prefs.grantBackupWriter(caller, uri.toString(), label) // only this backup folder, while locked
+            app.prefs.recordGrantedFolder(caller, uri.toString())
             setResult(Activity.RESULT_OK, Intent().setData(uri).putExtra(EXTRA_FOLDER_NAME, name).addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION))

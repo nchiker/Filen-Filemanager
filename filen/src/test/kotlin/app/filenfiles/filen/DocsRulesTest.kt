@@ -46,6 +46,13 @@ class DocsRulesTest {
         assertEquals(a, DocsRules.accountId(42u, k)); assertNotEquals(a, DocsRules.accountId(43u, k))
         assertEquals(32, a.length); assertFalse(a.contains("42"))
     }
+    @Test fun partnerIdIsStableOpaqueAndTiedToTheSecret() {
+        val k = ByteArray(32) { 3 }; val u = "11111111-2222-3333-4444-555555555555"
+        val p = DocsRules.partnerId(u, k)
+        assertEquals(p, DocsRules.partnerId(u.uppercase(), k)); assertNotEquals(p, DocsRules.partnerId("11111111-2222-3333-4444-555555555556", k))
+        assertNotEquals(p, DocsRules.partnerId(u, ByteArray(32) { 4 })); assertEquals(32, p.length)
+    }
+
     @Test fun accountIdDependsOnTheInstallSecretAndIsNotTheOldHash() {
         val k1 = ByteArray(32) { 1 }; val k2 = ByteArray(32) { 2 }
         assertNotEquals(DocsRules.accountId(42u, k1), DocsRules.accountId(42u, k2))

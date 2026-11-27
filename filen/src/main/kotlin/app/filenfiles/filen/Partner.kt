@@ -1,7 +1,7 @@
 package app.filenfiles.filen
 
 /** One person in the contact lists. [nick] is the display name they chose, when there is one. */
-class Person(val email: String, val nick: String?)
+class Person(val email: String, val nick: String?, val contactUuid: String? = null)
 
 /** I4 F9: where the partner connection stands. [wire] is the value Stack reads. */
 enum class PartnerState(val wire: String) { NONE("none"), REQUESTED("requested"), INCOMING("incoming"), CONNECTED("connected") }

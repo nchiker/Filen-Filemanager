@@ -12,6 +12,7 @@ import app.filenfiles.core.ItemId
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.Partner
+import app.filenfiles.filen.PartnerState
 import app.filenfiles.filen.ShareAnswer
 import app.filenfiles.filen.failureKind
 import app.filenfiles.filen.StackLink
@@ -27,7 +28,7 @@ import org.json.JSONObject
  *  - `account()`: -> {account_id, legacy_account_id}, an opaque id of the signed-in account (HMAC with a per-install secret; not the email); legacy_account_id is the id 0.5.0 and earlier gave, so an app can move its saved id once, or {error: "signed_out"}.
  *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner) plus {shared_via} (name of the nearest shared folder above it, when the item itself is not shared), or {error: not_found | signed_out | unknown}.
  *  - `contract()`: -> {level} (int, 1 = folder sharing F1-F11); open to pinned callers even when locked or signed out. No call = level 0.
- *  - `partner_status()`: -> {state: none|requested|incoming|connected, name}; `name` is a display name, never an address.
+ *  - `partner_status()`: -> {state: none|requested|incoming|connected, name, partner_id}; `partner_id` is an opaque stable id of the saved partner contact (only when connected); `name` is a display name, never an address.
  * Errors: `refused` (caller not pinned), `locked` (app lock on), `not_signed_in`, `unreachable` (Filen could not be asked).
  */
 class StackLinkProvider : ContentProvider() {
@@ -96,6 +97,7 @@ class StackLinkProvider : ContentProvider() {
         return Bundle().apply {
             putString("state", st.state.wire)
             st.who?.let { putString("name", Partner.displayName(it)) }
+            if (st.state == PartnerState.CONNECTED) st.who?.contactUuid?.let { putString("partner_id", app.filen.partnerId(it)) }
         }
     }
 

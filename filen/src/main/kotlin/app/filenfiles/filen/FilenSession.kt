@@ -37,6 +37,7 @@ class FilenSession(private val context: Context) {
     /** Opaque, stable id of the account (not the email); null when nobody has signed in. See [DocsRules.accountId]. */
     val accountId: String? get() = userId?.let { DocsRules.accountId(it, accountSecret()) }
     /** The id 0.5.0 and earlier used (SHA-256 of the user id); only for the one-time move to the new id. */
+    fun partnerId(contactUuid: String): String = DocsRules.partnerId(contactUuid, accountSecret())
     val legacyAccountId: String? get() = userId?.let(DocsRules::legacyAccountId)
 
     @Volatile private var secretCache: ByteArray? = null

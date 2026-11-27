@@ -10,6 +10,7 @@ import app.filenfiles.ui.AppRoot
 import app.filenfiles.ui.FilesTheme
 import app.filenfiles.ui.LockScreen
 import app.filenfiles.ui.LockedReaderDialog
+import app.filenfiles.ui.LockedWriterDialog
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,6 +36,7 @@ class MainActivity : FragmentActivity() {
                     AppRoot(app)
                     if (app.appLock.isLocked) LockScreen(app, this@MainActivity)
                     else app.appLock.askReader?.let { LockedReaderDialog(app, it) }
+                        ?: LockedAccess.nextWriteAsk(app.prefs.lockedWritePending, app.prefs.lockedWriteAsked)?.let { LockedWriterDialog(app, it) }
                 }
                 androidx.compose.runtime.LaunchedEffect(app.prefs.secureScreen) {
                     // Blocks screenshots and blanks the preview in the recent-apps list.

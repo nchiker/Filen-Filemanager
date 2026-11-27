@@ -86,6 +86,8 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val crawlSlots = kotlinx.coroutines.sync.Semaphore(2)
     /** Opaque stable id of the signed-in account (I4 F6); null when signed out. */
     val accountId: String? get() = if (session.isSignedIn) session.accountId else null
+    /** I4 F9: opaque stable id of a saved partner contact (HMAC with the per-install secret over the contact uuid). */
+    fun partnerId(contactUuid: String): String = session.partnerId(contactUuid)
     val legacyAccountId: String? get() = if (session.isSignedIn) session.legacyAccountId else null
     /** child ItemId -> parent folder ItemId, kept in [docState]. */
     private val sharedParents = object {
@@ -579,7 +581,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     suspend fun partnerLists(): PartnerLists = io {
         PartnerLists(
-            client.getContacts().map { Person(it.email, it.nickName?.takeIf(String::isNotBlank)) },
+            client.getContacts().map { Person(it.email, it.nickName?.takeIf(String::isNotBlank), it.uuid) },
             client.listOutgoingContactRequests().map { Person(it.email, it.nickName.takeIf(String::isNotBlank)) },
             client.listIncomingContactRequests().map { ContactRequest(it.uuid, it.email, it.nickName.takeIf(String::isNotBlank)) },
         )

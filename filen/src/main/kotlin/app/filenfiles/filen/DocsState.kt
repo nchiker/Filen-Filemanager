@@ -346,10 +346,15 @@ object DocsRules {
      * F6: opaque, stable per account and install, not the email, and not computable from the user id: HMAC-SHA256 with a random
      * per-install [secret] (kept with Filen's other secrets, see FilenSession).
      */
-    fun accountId(userId: ULong, secret: ByteArray): String {
+    fun accountId(userId: ULong, secret: ByteArray): String = hmacId("filen-account:$userId", secret)
+
+    /** F9 `partner_id`: same secret as [accountId], over the saved partner contact's uuid (a different label, so the two never collide). */
+    fun partnerId(contactUuid: String, secret: ByteArray): String = hmacId("filen-partner:${contactUuid.lowercase()}", secret)
+
+    private fun hmacId(message: String, secret: ByteArray): String {
         val mac = javax.crypto.Mac.getInstance("HmacSHA256")
         mac.init(javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256"))
-        return mac.doFinal("filen-account:$userId".toByteArray()).take(16).joinToString("") { "%02x".format(it) }
+        return mac.doFinal(message.toByteArray()).take(16).joinToString("") { "%02x".format(it) }
     }
 
     /** The id up to 0.5.0 (a plain SHA-256 of the user id). Kept only to move saved state over once, and sent to pinned apps so they can do the same. */
