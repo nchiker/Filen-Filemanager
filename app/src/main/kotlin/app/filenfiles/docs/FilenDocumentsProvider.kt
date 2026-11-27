@@ -33,6 +33,7 @@ import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.failureKind
 import app.filenfiles.core.ItemId
 import app.filenfiles.core.Origin
+import app.filenfiles.core.Permission
 import app.filenfiles.core.UploadStatus
 import app.filenfiles.transfer.TransferManager
 import app.filenfiles.transfer.TransferState
@@ -420,6 +421,29 @@ class FilenDocumentsProvider : DocumentsProvider() {
         items.forEach { if (fresh) parents[it.id.value] = parentDocumentId; c.addItem(it) }
         // Just-finished uploads that Filen's listing doesn't show yet (it can lag a few seconds): no gap for the client.
         app.transfers.recentUploads.missingFrom(parent, items.map { it.id }).forEach { parents[it.id.value] = parentDocumentId; c.addItem(it) }
+        // The same lag in "Shared by me": a file this app just saved or uploaded into a folder it shares can be missing from the shared
+        // listing for a few seconds while its old version is already gone. Without the receipt a partner would see the file vanish and come
+        // back under a new id (and Stack would lose its stacks and tags). Own uploads only, into this folder, and only when Filen says
+        // right now that this version is still the file's current one, not trashed and still in this folder (a rename or move since is not
+        // repeated from the receipt).
+        if (fresh && parent.scheme == "filen-out" && parent.key != "root") {
+            val drive = ItemId("filen:" + parent.key)
+            val have = items.map { it.id.key }.toSet()
+            val names = items.map { it.name }.toSet()
+            app.transfers.recentUploads.missingFrom(drive, emptyList())
+                .filter { !it.isDirectory && it.id.key !in have && it.name !in names }
+                .forEach { u ->
+                    val head = runCatching {
+                        blocking {
+                            app.filen.currentHead(u.id)?.takeIf { !it.trashed && it.item.id.key == u.id.key && app.filen.currentParent(it.item.id) == drive }
+                        }
+                    }.getOrNull() ?: return@forEach
+                    if (head.item.name in names) return@forEach
+                    val out = ItemId("filen-out:" + u.id.key)
+                    parents[out.value] = parentDocumentId
+                    c.addItem(head.item.copy(id = out, origin = Origin.FILEN_SHARED_BY_ME, permission = Permission.READ_ONLY, lineage = null), out.value)
+                }
+        }
         pendingRowsIn(parent).forEach { c.addPending(it) }
         return c
     }
