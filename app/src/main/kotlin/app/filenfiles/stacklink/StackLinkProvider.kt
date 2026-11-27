@@ -26,6 +26,7 @@ import org.json.JSONObject
  *  - `lookup(uuid)`: -> {exists, path, trashed, shared}.
  *  - `account()`: -> {account_id}, an opaque stable id of the signed-in account (not the email), or {error: "signed_out"}.
  *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner) plus {shared_via} (name of the nearest shared folder above it, when the item itself is not shared), or {error: not_found | signed_out | unknown}.
+ *  - `contract()`: -> {level} (int, 1 = folder sharing F1-F11); open to pinned callers even when locked or signed out. No call = level 0.
  *  - `partner_status()`: -> {state: none|requested|incoming|connected, name}; `name` is a display name, never an address.
  * Errors: `refused` (caller not pinned), `locked` (app lock on), `not_signed_in`, `unreachable` (Filen could not be asked).
  */
@@ -35,6 +36,8 @@ class StackLinkProvider : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
         val ctx = context ?: return err("unreachable")
         if (!StackLink.callerAllowed(ctx, Binder.getCallingUid())) return err("refused")
+        // The contract level is a fact about this build, not about the account: answered even when locked or signed out.
+        if (method == "contract") return Bundle().apply { putInt("level", StackLink.CONTRACT_LEVEL) }
         val app = ctx.applicationContext as FilesApp
         app.awaitReady()
         if (app.appLock.isLockedForOthers) return err("locked")

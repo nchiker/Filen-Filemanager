@@ -17,6 +17,8 @@ import java.security.MessageDigest
  */
 object StackLink {
     const val STACK_PACKAGE = "org.stackdocs.app"
+    /** Reported by `call("contract")`. 1 = folder-sharing interfaces F1-F11. Raise only when the contract grows. */
+    const val CONTRACT_LEVEL = 1
     /** TEST ONLY: a Stack checks build's package, set from a Gradle property; empty (the default) in every shipped build. */
     @Volatile var testPackage: String = ""
 
