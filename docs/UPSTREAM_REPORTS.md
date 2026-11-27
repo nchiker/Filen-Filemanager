@@ -1,4 +1,7 @@
-# Reports to Filen (the owner approves each one first)
+# Reports to Filen: CLOSED FOR GOOD
+
+**Owner's rule (2026-11-27): we never file issues, pull requests or comments with Filen again.** Read upstream only
+(`tools/sdk_upstream.sh`); work around SDK gaps in this app. The history below is kept as a record.
 
 Sent 2026-11-27 on the owner's go-ahead: #1 → https://github.com/FilenCloudDienste/filen-rs/issues/23,
 #2 → https://github.com/FilenCloudDienste/filen-rs/issues/24.
