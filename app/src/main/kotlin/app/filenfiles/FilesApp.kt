@@ -153,8 +153,9 @@ class FilesApp : Application() {
     override fun onCreate() {
         super.onCreate()
         app.filenfiles.filen.StackLink.testPackage = BuildConfig.STACK_TEST_PACKAGE
+        app.filenfiles.filen.StackLink.testCert = BuildConfig.STACK_TEST_CERT
         // Once per process: a build that trusts a test package as a caller must never be mistaken for a shipped one.
-        if (BuildConfig.STACK_TEST_PACKAGE.isNotEmpty()) android.util.Log.w("FilenTestPin", "TEST BUILD: ${BuildConfig.STACK_TEST_PACKAGE} is accepted as a caller (certificate not pinned). Never release this build.")
+        if (BuildConfig.STACK_TEST_PACKAGE.isNotEmpty()) android.util.Log.w("FilenTestPin", "TEST BUILD: ${BuildConfig.STACK_TEST_PACKAGE} is accepted as a caller (only with its configured certificate). Never release this build.")
         session = FilenSession(this)
         local = LocalStorageProvider(this)
         filen = FilenStorageProvider(this, session)

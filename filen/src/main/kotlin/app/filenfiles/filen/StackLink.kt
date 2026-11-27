@@ -21,6 +21,12 @@ object StackLink {
     const val CONTRACT_LEVEL = 1
     /** TEST ONLY: a Stack checks build's package, set from a Gradle property; empty (the default) in every shipped build. */
     @Volatile var testPackage: String = ""
+    /** TEST ONLY: SHA-256 (lowercase hex) of the signing certificate the test package must have. Empty = the test package is not trusted at all. */
+    @Volatile var testCert: String = ""
+
+    /** The certificates accepted for [pkg]: the pinned ones, or (test build only) the test package with exactly its configured certificate. */
+    fun acceptedCerts(pkg: String, pinned: Map<String, Set<String>>, testPackage: String, testCert: String): Set<String> =
+        pinned[pkg] ?: if (testPackage.isNotEmpty() && testCert.isNotEmpty() && pkg == testPackage) setOf(testCert) else emptySet()
 
     /**
      * package -> accepted SHA-256 values of its release signing certificate (lowercase hex; public values, not keys). A list
@@ -32,18 +38,18 @@ object StackLink {
     )
 
     /** The packages Filen hands persisted folder grants to: the pinned apps and, in a test build, the test package. */
-    fun pinnedPackages(): Set<String> = (PINNED.keys + testPackage).filter { it.isNotEmpty() }.toSet()
+    fun pinnedPackages(): Set<String> = (PINNED.keys + testPackage.takeIf { testCert.isNotEmpty() }.orEmpty()).filter { it.isNotEmpty() }.toSet()
 
     /** True when [uid] belongs to exactly one package and that package + its one signing certificate are pinned. */
     fun callerAllowed(context: Context, uid: Int): Boolean {
         // A caller from another Android user (the shell, a work profile) makes this throw: not pinned, so refused.
         val pkg = try { context.packageManager.getPackagesForUid(uid)?.singleOrNull() } catch (_: SecurityException) { null } ?: return false
-        if (testPackage.isNotEmpty() && pkg == testPackage) return true // TEST ONLY build flag, empty in shipped builds
         return certMatches(context, pkg)
     }
 
     private fun certMatches(context: Context, pkg: String): Boolean {
-        val want = PINNED[pkg] ?: return false
+        val want = acceptedCerts(pkg, PINNED, testPackage, testCert)
+        if (want.isEmpty()) return false
         return certificateOf(context, pkg) in want
     }
 
@@ -84,7 +90,7 @@ object StackLink {
             val target = testPackage.ifEmpty { STACK_PACKAGE }
             val authority = "$target.link"
             val info = context.packageManager.resolveContentProvider(authority, 0) ?: return
-            if (info.packageName != target || (testPackage.isEmpty() && !certMatches(context, STACK_PACKAGE))) return
+            if (info.packageName != target || !certMatches(context, target)) return
             context.contentResolver.call(Uri.parse("content://$authority"), method, message.toString(), null as Bundle?)
         } catch (_: Throwable) {
             // Stack missing, locked, busy or refusing: never break a file operation.

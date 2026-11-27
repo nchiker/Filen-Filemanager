@@ -8,6 +8,12 @@ plugins {
 // Developers only: test builds for the TEST phone pass -PallowTestPin=true as well (docs/STATUS.md).
 run {
     val pinned = !(project.findProperty("stackTestPackage") as String?).isNullOrBlank()
+    // A test package is trusted only together with its signing certificate: -PstackTestCert=<sha256 hex of the checks app's signer>.
+    val cert = (project.findProperty("stackTestCert") as String?)?.trim()?.lowercase().orEmpty()
+    if (pinned && !Regex("[0-9a-f]{64}").matches(cert))
+        throw GradleException("-PstackTestPackage needs -PstackTestCert=<64 hex digits: SHA-256 of the test app's signing certificate> (docs/STATUS.md, test builds).")
+    if (!pinned && cert.isNotEmpty())
+        throw GradleException("-PstackTestCert is only valid together with -PstackTestPackage.")
     if (pinned && project.findProperty("allowTestPin") != "true") {
         gradle.taskGraph.whenReady {
             val release = allTasks.firstOrNull { it.project == project && it.name.contains("Release", ignoreCase = true) }
@@ -26,8 +32,9 @@ android {
         targetSdk = 36
         versionCode = 17
         versionName = "0.5.0"
-        // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (certificate not pinned). Empty in shipped builds.
+        // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (only with its certificate, -PstackTestCert). Empty in shipped builds.
         buildConfigField("String", "STACK_TEST_PACKAGE", "\"${(project.findProperty("stackTestPackage") as String?) ?: ""}\"")
+        buildConfigField("String", "STACK_TEST_CERT", "\"${((project.findProperty("stackTestCert") as String?) ?: "").trim().lowercase()}\"")
         manifestPlaceholders["stackLinkAuthority"] = ((project.findProperty("stackTestPackage") as String?)?.takeIf { it.isNotBlank() } ?: "org.stackdocs.app") + ".link"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
