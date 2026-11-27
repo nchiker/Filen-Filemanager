@@ -62,15 +62,17 @@ class LockedAccessTest {
         assertEquals(listOf(tree("u1")), LockedAccess.askableTrees(rec, listOf("stack"), listOf(tree("u1"), drive, inRoot, outRoot, tree("u2"))))
         assertTrue(LockedAccess.askableTrees(rec, listOf("other"), listOf(tree("u1"))).isEmpty())
     }
-    @Test fun allowWriteKeepsAnEarlierNotNowAndRemoveKeepsOtherReading() {
+    @Test fun allowWriteReadsTheSameFolderEvenAfterNotNowAndRemoveKeepsOtherReading() {
         val e = LockedAccess.entry("stack", tree("u1"))
         // never answered: reader created by the write, marked
         val (r1, a1, o1) = LockedAccess.allowWrite(emptySet(), emptySet(), emptySet(), e)
         assertEquals(setOf(e), r1); assertEquals(setOf(e), a1); assertEquals(setOf(e), o1)
         assertEquals(emptySet<String>(), LockedAccess.removeWrite(r1, o1, e).first) // created by the write: dropped
-        // earlier "Not now" for reading: stays off
-        val (r2, _, o2) = LockedAccess.allowWrite(emptySet(), setOf(e), emptySet(), e)
-        assertTrue(r2.isEmpty() && o2.isEmpty())
+        // earlier "Not now" for reading: Allow on the write prompt is consent to read this folder too, marked write-created; other trees untouched
+        val other = LockedAccess.entry("stack", tree("u2"))
+        val (r2, a2, o2) = LockedAccess.allowWrite(setOf(other), setOf(e, other), emptySet(), e)
+        assertEquals(setOf(e, other), r2); assertEquals(setOf(e, other), a2); assertEquals(setOf(e), o2)
+        assertEquals(setOf(other), LockedAccess.removeWrite(r2, o2, e).first) // Remove drops only the one the write created
         // reading allowed elsewhere (not by the write): Remove leaves it
         val (r3, _, o3) = LockedAccess.allowWrite(setOf(e), setOf(e), emptySet(), e)
         assertEquals(setOf(e), LockedAccess.removeWrite(r3, o3, e).first)

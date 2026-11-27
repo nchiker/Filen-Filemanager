@@ -55,9 +55,9 @@ object LockedAccess {
     fun askableTrees(recorded: Set<String>, pkgs: Collection<String>, trees: List<String>): List<String> =
         trees.filter { t -> !isBroadTree(t) && pkgs.any { entry(it, t) in recorded } }
 
-    /** Write Allow: (readers, readersAsked, origin). Adds the reader only when never answered; an earlier "Not now" or allow is left alone. */
+    /** Write Allow: (readers, readersAsked, origin). Allow is explicit consent to read that same entry too: the reader is added (marked write-created) unless already allowed; an earlier "Not now" is overridden for this entry only. */
     fun allowWrite(readers: Set<String>, readersAsked: Set<String>, origin: Set<String>, e: String): Triple<Set<String>, Set<String>, Set<String>> =
-        if (e in readers || e in readersAsked) Triple(readers, readersAsked, origin) else Triple(readers + e, readersAsked + e, origin + e)
+        if (e in readers) Triple(readers, readersAsked, origin) else Triple(readers + e, readersAsked + e, origin + e)
 
     /** Remove: the reader entry goes only if the write grant created it ([origin]). Returns (readers, origin). */
     fun removeWrite(readers: Set<String>, origin: Set<String>, e: String): Pair<Set<String>, Set<String>> =
