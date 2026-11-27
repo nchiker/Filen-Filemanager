@@ -3,6 +3,13 @@
 Sent 2026-11-27 on the owner's go-ahead: #1 → https://github.com/FilenCloudDienste/filen-rs/issues/23,
 #2 → https://github.com/FilenCloudDienste/filen-rs/issues/24.
 
+**Outcome (2026-11-27):** #2 was WRONG and was closed by a maintainer: `list_dir_recursive` / `listDirRecursive` takes
+`AnyDirWithContext`, which includes shared folders (`fs/categories/shared.rs`). The maintainer warned that another
+unverified AI-generated issue gets the owner blocked from the FilenCloudDienste org. #1 is UNVERIFIED: `get_dir(uuid)`
+/ `get_file(uuid)` / `get_item_path` may work for received items; nobody tested it. **Rule from now on: no report
+without a running reproduction that shows the gap.** Our own opportunity from #2: the app can list a whole received tree
+with `listDirRecursive` instead of one call per folder (SharedWatcher, F1 crawl).
+
 SDK checked: filen-rs c93cedd (0.5.35) and origin/main (9 newer commits; only 617bc84 touches the SDK, a connect-timeout fix).
 
 ## 1. Missing: look up a received (shared-with-me) item, or its parent, by uuid
