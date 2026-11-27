@@ -20,7 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.filen_sdk_rs.SocketEvent
 import uniffi.filen_sdk_rs.SocketEventListener
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -39,6 +38,9 @@ object SharedWatcher {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var debounce: Job? = null
+    private var burstStart = 0L
+    private const val QUIET_MS = 5_000L
+    private const val MAX_WAIT_MS = 60_000L
     private var handle: AutoCloseable? = null
     private val lock = Any()
 
@@ -66,19 +68,25 @@ object SharedWatcher {
         return out
     }
 
+    /**
+     * Fingerprint of a tree as the pinned apps see it: "Shared by me" through the partner-scoped listing (what the provider
+     * answers), the rest through the router. Capped at [MAX_ITEMS] entries (a capped prefix is hashed); null when a folder
+     * cannot be listed right now.
+     */
     private suspend fun fingerprint(app: FilesApp, root: ItemId): String? {
-        val md = MessageDigest.getInstance("SHA-256")
-        var count = 0
+        val fp = TreeFingerprint(MAX_ITEMS)
         suspend fun walk(id: ItemId, depth: Int): Boolean {
-            val l = try { app.router.list(id) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return false }
+            val l = try {
+                if (id.scheme == "filen-out") app.filen.listForProvider(id) else app.router.list(id)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return false }
             for (i in l.items.sortedBy { it.id.value }) {
-                if (++count > MAX_ITEMS) return false
-                md.update("${i.id.value}|${i.name}|${i.size}|${i.modified}\n".toByteArray())
+                if (!fp.add("${i.id.value}|${i.name}|${i.size}|${i.modified}")) return true
                 if (i.isDirectory && depth < MAX_DEPTH && !walk(i.id, depth + 1)) return false
+                if (fp.capped) return true
             }
             return true
         }
-        return if (walk(root, 0)) md.digest().joinToString("") { "%02x".format(it) } else null
+        return if (walk(root, 0)) fp.digest() else null
     }
 
     /** Checks every granted tree; returns how many changed. Safe to call any time (does nothing without grants or sign-in). */
@@ -109,17 +117,25 @@ object SharedWatcher {
     private fun notify(app: FilesApp, tree: Uri, doc: String, holders: List<String>) {
         runCatching { app.contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, doc), null) }
         for (pkg in holders) runCatching {
-            app.sendBroadcast(Intent(ACTION).setPackage(pkg).putExtra(EXTRA_TREE_URI, tree.toString()))
+            val intent = Intent(ACTION).setPackage(pkg).putExtra(EXTRA_TREE_URI, tree.toString())
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                // Stack checks getSentFromPackage() on Android 14+: the sender's identity must be shared with this one receiver.
+                val opts = android.app.BroadcastOptions.makeBasic().setShareIdentityEnabled(true)
+                app.sendBroadcast(intent, null, opts.toBundle())
+            } else app.sendBroadcast(intent)
         }
     }
 
     // ---------- triggers ----------
 
-    /** A check soon, but not more than once in a burst of events. */
-    fun requestCheck(app: FilesApp, delayMs: Long = 5_000) {
+    /** A check soon, but not more than once in a burst of events; waits for quiet, at most [MAX_WAIT_MS] after the burst began. */
+    fun requestCheck(app: FilesApp, quietMs: Long = QUIET_MS) {
         synchronized(lock) {
+            val now = System.currentTimeMillis()
+            if (debounce?.isActive != true) burstStart = now
+            val wait = WatchRules.delayFor(now, burstStart, quietMs, MAX_WAIT_MS)
             debounce?.cancel()
-            debounce = scope.launch { delay(delayMs); runCatching { check(app) } }
+            debounce = scope.launch { delay(wait); synchronized(lock) { burstStart = 0L }; scope.launch { runCatching { check(app) } } } // the check itself is not cancelled by later events
         }
     }
 
