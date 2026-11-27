@@ -190,6 +190,7 @@ class FilesApp : Application() {
                 if (it is FilenSession.State.LoggedOut) runCatching { resetAccess() }
                 if (it is FilenSession.State.LoggedIn) runCatching {
                     val acct = filen.accountId
+                    prefs.migrateAccountId(session.legacyAccountId, acct)
                     if (app.filenfiles.filen.AccountChange.differs(prefs.lastAccount, acct)) resetAccess()
                     if (acct != null) prefs.lastAccount = acct
                 }

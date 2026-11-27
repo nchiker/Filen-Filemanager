@@ -41,9 +41,17 @@ class DocsRulesTest {
     }
 
     @Test fun accountIdIsStableOpaqueAndDistinct() {
-        val a = DocsRules.accountId(42u)
-        assertEquals(a, DocsRules.accountId(42u)); assertNotEquals(a, DocsRules.accountId(43u))
+        val k = ByteArray(32) { it.toByte() }
+        val a = DocsRules.accountId(42u, k)
+        assertEquals(a, DocsRules.accountId(42u, k)); assertNotEquals(a, DocsRules.accountId(43u, k))
         assertEquals(32, a.length); assertFalse(a.contains("42"))
+    }
+    @Test fun accountIdDependsOnTheInstallSecretAndIsNotTheOldHash() {
+        val k1 = ByteArray(32) { 1 }; val k2 = ByteArray(32) { 2 }
+        assertNotEquals(DocsRules.accountId(42u, k1), DocsRules.accountId(42u, k2))
+        assertNotEquals(DocsRules.legacyAccountId(42u), DocsRules.accountId(42u, k1))
+        assertEquals(DocsRules.legacyAccountId(42u), DocsRules.legacyAccountId(42u)) // old scheme unchanged, for the one-time move
+        assertEquals("b2f8c8b3d4a7c2b2dd2b5b4d7d3e52a0".length, DocsRules.legacyAccountId(1u).length)
     }
 
     private val tree = mapOf("filen:f" to "filen:d", "filen:d" to null, "filen-in:x" to null)

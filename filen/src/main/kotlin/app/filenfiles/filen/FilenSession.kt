@@ -35,7 +35,22 @@ class FilenSession(private val context: Context) {
     /** Filen's numeric user id of the account last signed in on this phone (kept through an expiry, cleared by sign-out). */
     @Volatile private var userId: ULong? = null
     /** Opaque, stable id of the account (not the email); null when nobody has signed in. See [DocsRules.accountId]. */
-    val accountId: String? get() = userId?.let(DocsRules::accountId)
+    val accountId: String? get() = userId?.let { DocsRules.accountId(it, accountSecret()) }
+    /** The id 0.5.0 and earlier used (SHA-256 of the user id); only for the one-time move to the new id. */
+    val legacyAccountId: String? get() = userId?.let(DocsRules::legacyAccountId)
+
+    @Volatile private var secretCache: ByteArray? = null
+    /**
+     * Random per-install key for [accountId]. Created once and kept in the same encrypted store as the session; it survives
+     * sign-out (so the id of the same account stays the same) and is gone with an uninstall.
+     */
+    private fun accountSecret(): ByteArray = secretCache ?: synchronized(this) {
+        secretCache ?: run {
+            val hex = prefs.getString("accountSecret", null) ?: ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+                .joinToString("") { "%02x".format(it) }.also { prefs.edit().putString("accountSecret", it).commit() }
+            ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }.also { secretCache = it }
+        }
+    }
 
     private val prefs by lazy {
         val key = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()

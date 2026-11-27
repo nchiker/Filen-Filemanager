@@ -342,8 +342,18 @@ object DocsRules {
     /** F3: changes whenever the content of a file changes (Filen gives a saved-over file a new uuid; size and time back that up). */
     fun version(item: FileItem): String? = if (item.isDirectory) null else "${item.id.key}.${item.size}.${item.modified}"
 
-    /** F6: opaque, stable per account, not the email. */
-    fun accountId(userId: ULong): String {
+    /**
+     * F6: opaque, stable per account and install, not the email, and not computable from the user id: HMAC-SHA256 with a random
+     * per-install [secret] (kept with Filen's other secrets, see FilenSession).
+     */
+    fun accountId(userId: ULong, secret: ByteArray): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256"))
+        return mac.doFinal("filen-account:$userId".toByteArray()).take(16).joinToString("") { "%02x".format(it) }
+    }
+
+    /** The id up to 0.5.0 (a plain SHA-256 of the user id). Kept only to move saved state over once, and sent to pinned apps so they can do the same. */
+    fun legacyAccountId(userId: ULong): String {
         val h = MessageDigest.getInstance("SHA-256").digest("filen-account:$userId".toByteArray())
         return h.take(16).joinToString("") { "%02x".format(it) }
     }

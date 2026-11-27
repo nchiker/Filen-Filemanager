@@ -24,7 +24,7 @@ import org.json.JSONObject
  * ask, identified by kernel uid -> package -> certificate SHA-256 ([StackLink.callerAllowed]); everyone else is refused.
  *  - `locate(uri)`: the Filen document URI -> {uuid, path}, or {error: "not_filen"}.
  *  - `lookup(uuid)`: -> {exists, path, trashed, shared}.
- *  - `account()`: -> {account_id}, an opaque stable id of the signed-in account (not the email), or {error: "signed_out"}.
+ *  - `account()`: -> {account_id, legacy_account_id}, an opaque id of the signed-in account (HMAC with a per-install secret; not the email); legacy_account_id is the id 0.5.0 and earlier gave, so an app can move its saved id once, or {error: "signed_out"}.
  *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner) plus {shared_via} (name of the nearest shared folder above it, when the item itself is not shared), or {error: not_found | signed_out | unknown}.
  *  - `contract()`: -> {level} (int, 1 = folder sharing F1-F11); open to pinned callers even when locked or signed out. No call = level 0.
  *  - `partner_status()`: -> {state: none|requested|incoming|connected, name}; `name` is a display name, never an address.
@@ -49,7 +49,7 @@ class StackLinkProvider : ContentProvider() {
             when (method) {
                 "locate" -> locate(app, arg)
                 "lookup" -> lookup(app, arg)
-                "account" -> app.filen.accountId?.let { Bundle().apply { putString("account_id", it) } } ?: err("signed_out")
+                "account" -> app.filen.accountId?.let { id -> Bundle().apply { putString("account_id", id); app.filen.legacyAccountId?.let { putString("legacy_account_id", it) } } } ?: err("signed_out")
                 "partner_status" -> partnerStatus(app)
                 "share_state" -> shareState(app, extras?.getString("app.filenfiles.extra.FILEN_UUID") ?: arg)
                 else -> err("invalid")

@@ -1,5 +1,6 @@
 package app.filenfiles.docs
 
+import app.filenfiles.filen.StackLink
 import android.Manifest
 import android.app.PendingIntent
 import android.content.pm.PackageManager
@@ -390,6 +391,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
         requireSignedIn(doc = parentDocumentId)
         val parent = idOf(parentDocumentId)
+        // The account ids go only to a pinned caller (Stack, Ami Pro): not to the picker or any other app holding a grant.
+        val pinnedCaller = StackLink.callerAllowed(context!!, Binder.getCallingUid())
         val docState = app.filen.docState
         // Offline, a fresh listing can't be fetched. Answer from the last listing we saw (kept on disk, so also after a
         // process death) plus the uploads we know about, marked FRESH=false so a client never reads it as "the folder
@@ -423,7 +426,12 @@ class FilenDocumentsProvider : DocumentsProvider() {
         if (fresh) { app.listingCache[parent.value] = listing; docState.putListing(parent.value, items) }
         val c = MatrixCursor(projection ?: DOC_PROJECTION)
         c.setNotificationUri(context!!.contentResolver, android.provider.DocumentsContract.buildChildDocumentsUri(AUTHORITY, parentDocumentId))
-        c.extras = android.os.Bundle().apply { putBoolean(EXTRA_FRESH, fresh); putString(EXTRA_ACCOUNT, app.filen.accountId ?: "") }
+        c.extras = android.os.Bundle().apply { putBoolean(EXTRA_FRESH, fresh); 
+            if (pinnedCaller) {
+                putString(EXTRA_ACCOUNT, app.filen.accountId ?: "")
+                app.filen.legacyAccountId?.let { putString(EXTRA_ACCOUNT_LEGACY, it) }
+            }
+        }
         // Parent links come from listings the server just gave; an offline (stored) answer never rewrites them.
         items.forEach { if (fresh) parents[it.id.value] = parentDocumentId; c.addItem(it) }
         // Just-finished uploads that Filen's listing doesn't show yet (it can lag a few seconds): no gap for the client.
@@ -745,6 +753,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
         const val EXTRA_FRESH = "app.filenfiles.extra.FRESH"
         /** I4 F2/F6: the opaque account id the listing belongs to. */
         const val EXTRA_ACCOUNT = "app.filenfiles.extra.ACCOUNT"
+        /** The account id 0.5.0 and earlier sent as EXTRA_ACCOUNT. Pinned callers only; lets an app move its saved id to the new one once. */
+        const val EXTRA_ACCOUNT_LEGACY = "app.filenfiles.extra.ACCOUNT_LEGACY"
         private const val LOCKED = "Filen Files is locked"
         private const val PENDING_PREFIX = "filen-pending:"
         private val ROOT_PROJECTION = arrayOf(

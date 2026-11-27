@@ -86,6 +86,7 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
     private val crawlSlots = kotlinx.coroutines.sync.Semaphore(2)
     /** Opaque stable id of the signed-in account (I4 F6); null when signed out. */
     val accountId: String? get() = if (session.isSignedIn) session.accountId else null
+    val legacyAccountId: String? get() = if (session.isSignedIn) session.legacyAccountId else null
     /** child ItemId -> parent folder ItemId, kept in [docState]. */
     private val sharedParents = object {
         operator fun get(id: String): String? = docState.parent(id)

@@ -80,6 +80,18 @@ class Prefs(context: Context) {
         sp.all.keys.filter { it.startsWith("readerLabel:") || it.startsWith("f11:") }.forEach { e.remove(it) }
         e.apply()
     }
+    /**
+     * One-time move to the HMAC account id (0.5.x): everything saved under the legacy id (last account, partner, F11 folders)
+     * is kept for the same account. A different account's data is left to the normal account-change reset.
+     */
+    fun migrateAccountId(legacy: String?, current: String?) {
+        if (legacy == null || current == null || legacy == current) return
+        val e = sp.edit()
+        if (sp.getString("lastAccount", null) == legacy) e.putString("lastAccount", current)
+        if (sp.getString("partnerAccount", null) == legacy) e.putString("partnerAccount", current)
+        sp.all.filter { it.key.startsWith("f11:$legacy:") }.forEach { (k, v) -> e.remove(k).putString("f11:$current:" + k.removePrefix("f11:$legacy:"), v as String) }
+        e.apply()
+    }
     /** The account whose session was last seen signed in (opaque id); null before the first sign-in. */
     var lastAccount: String?
         get() = sp.getString("lastAccount", null)
