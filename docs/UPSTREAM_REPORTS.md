@@ -1,4 +1,7 @@
-# Drafts for Filen (not sent; the owner approves each one first)
+# Reports to Filen (the owner approves each one first)
+
+Sent 2026-11-27 on the owner's go-ahead: #1 → https://github.com/FilenCloudDienste/filen-rs/issues/23,
+#2 → https://github.com/FilenCloudDienste/filen-rs/issues/24.
 
 SDK checked: filen-rs c93cedd (0.5.35) and origin/main (9 newer commits; only 617bc84 touches the SDK, a connect-timeout fix).
 
