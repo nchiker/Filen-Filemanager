@@ -44,6 +44,28 @@ object LockedAccess {
         return out
     }
 
+    /** Rebuilt entries minus any the owner already answered (reader allowed, reader asked, or write asked). Never overrides an answer. */
+    fun rebuildUnanswered(rebuilt: Set<String>, readers: Set<String>, readersAsked: Set<String>, writeAsked: Set<String>): Set<String> =
+        rebuilt.filter { it !in readers && it !in readersAsked && it !in writeAsked }.toSet()
+
+    /** Whether a tree is a whole-drive / shared-with-me / shared-by-me tree: never asked about for writing. */
+    fun isBroadTree(tree: String): Boolean = treeDocId(tree).let { it.endsWith(":root") || it.startsWith("filen-in:") || it.startsWith("filen-out:") }
+
+    /** Of the covering [trees], those that may be asked about for writing: recorded for [pkgs] (gfa / F11 -> [recorded] entries) and not a broad tree. */
+    fun askableTrees(recorded: Set<String>, pkgs: Collection<String>, trees: List<String>): List<String> =
+        trees.filter { t -> !isBroadTree(t) && pkgs.any { entry(it, t) in recorded } }
+
+    /** Write Allow: (readers, readersAsked, origin). Adds the reader only when never answered; an earlier "Not now" or allow is left alone. */
+    fun allowWrite(readers: Set<String>, readersAsked: Set<String>, origin: Set<String>, e: String): Triple<Set<String>, Set<String>, Set<String>> =
+        if (e in readers || e in readersAsked) Triple(readers, readersAsked, origin) else Triple(readers + e, readersAsked + e, origin + e)
+
+    /** Remove: the reader entry goes only if the write grant created it ([origin]). Returns (readers, origin). */
+    fun removeWrite(readers: Set<String>, origin: Set<String>, e: String): Pair<Set<String>, Set<String>> =
+        (if (e in origin) readers - e else readers) to (origin - e)
+
+    /** Methods Stack Link answers to pinned callers even while locked: opaque ids and a display name only, no file access. */
+    fun answeredWhileLocked(method: String) = method == "contract" || method == "partner_status"
+
     /**
      * A locked write was refused for the caller's [pkgs] on the covering [trees]: the (package, tree) entries to remember so the
      * owner is asked once. Nothing for an entry already allowed to write, or already asked about.

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.provider.DocumentsContract
+import app.filenfiles.LockedAccess
 import app.filenfiles.FilesApp
 import app.filenfiles.core.ItemId
 import app.filenfiles.filen.FilenSession
@@ -28,7 +29,7 @@ import org.json.JSONObject
  *  - `account()`: -> {account_id, legacy_account_id}, an opaque id of the signed-in account (HMAC with a per-install secret; not the email); legacy_account_id is the id 0.5.0 and earlier gave, so an app can move its saved id once, or {error: "signed_out"}.
  *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner) plus {shared_via} (name of the nearest shared folder above it, when the item itself is not shared), or {error: not_found | signed_out | unknown}.
  *  - `contract()`: -> {level} (int, 1 = folder sharing F1-F11); open to pinned callers even when locked or signed out. No call = level 0.
- *  - `partner_status()`: -> {state: none|requested|incoming|connected, name, partner_id}; `partner_id` is an opaque stable id of the saved partner contact (only when connected); `name` is a display name, never an address.
+ *  - `partner_status()`: (also answered while locked) -> {state: none|requested|incoming|connected, name, partner_id}; `partner_id` is an opaque stable id of the saved partner contact (only when connected); `name` is a display name, never an address.
  * Errors: `refused` (caller not pinned), `locked` (app lock on), `not_signed_in`, `unreachable` (Filen could not be asked).
  */
 class StackLinkProvider : ContentProvider() {
@@ -41,7 +42,8 @@ class StackLinkProvider : ContentProvider() {
         if (method == "contract") return Bundle().apply { putInt("level", StackLink.CONTRACT_LEVEL) }
         val app = ctx.applicationContext as FilesApp
         app.awaitReady()
-        if (app.appLock.isLockedForOthers) return err("locked")
+        // partner_status is opaque ids and a display name, no file access: answered while locked too.
+        if (app.appLock.isLockedForOthers && !LockedAccess.answeredWhileLocked(method)) return err("locked")
         // Session restore runs in the background after a cold start.
         val deadline = System.currentTimeMillis() + 10_000
         while (app.session.state.value is FilenSession.State.Unknown && System.currentTimeMillis() < deadline) Thread.sleep(50)

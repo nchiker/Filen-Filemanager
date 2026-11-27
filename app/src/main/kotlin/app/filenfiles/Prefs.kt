@@ -54,10 +54,12 @@ class Prefs(context: Context) {
             val f11 = all.filter { it.key.startsWith("f11:") && it.value is String }.entries.associate { it.key.removePrefix("f11:").substringAfter(':') to it.value as String }
             val granted = all.filter { it.key.startsWith("gfa:") }.entries.associate { it.key.removePrefix("gfa:") to ((it.value as? Set<*>)?.filterIsInstance<String>()?.toSet() ?: emptySet()) }
             val rebuilt = LockedAccess.rebuildWriters(f11, granted) { android.provider.DocumentsContract.buildTreeDocumentUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY, "filen:$it").toString() }
-            if (rebuilt.isNotEmpty()) {
-                e.putStringSet("lockedWriteGrants", (sp.getStringSet("lockedWriteGrants", null).orEmpty() + rebuilt))
-                e.putStringSet("lockedGrants", (sp.getStringSet("lockedGrants", null).orEmpty() + rebuilt))
-                e.putStringSet("lockedGrantsAsked", (sp.getStringSet("lockedGrantsAsked", null).orEmpty() + rebuilt))
+            val fresh = LockedAccess.rebuildUnanswered(rebuilt, sp.getStringSet("lockedGrants", null).orEmpty(), sp.getStringSet("lockedGrantsAsked", null).orEmpty(), sp.getStringSet("lockedWriteAsked", null).orEmpty())
+            if (fresh.isNotEmpty()) {
+                e.putStringSet("lockedWriteGrants", (sp.getStringSet("lockedWriteGrants", null).orEmpty() + fresh))
+                e.putStringSet("lockedGrants", (sp.getStringSet("lockedGrants", null).orEmpty() + fresh))
+                e.putStringSet("lockedGrantsAsked", (sp.getStringSet("lockedGrantsAsked", null).orEmpty() + fresh))
+                e.putStringSet("lockedReaderFromWrite", (sp.getStringSet("lockedReaderFromWrite", null).orEmpty() + fresh))
             }
             e.putBoolean("lockedWritersRebuilt", true)
         }
@@ -68,8 +70,11 @@ class Prefs(context: Context) {
     /** (package, tree URI) entries the owner was already asked about (allowed or "Not now"); listed in Settings, never asked again. */
     var lockedReadersAsked by mutableStateOf(sp.getStringSet("lockedGrantsAsked", null)?.toSet() ?: emptySet()); private set
     private fun saveReaders() { sp.edit().putStringSet("lockedGrants", lockedReaders).putStringSet("lockedGrantsAsked", lockedReadersAsked).apply() }
+    /** Reader entries that only exist because a write grant created them; Remove drops those and nothing else. */
+    private var readerFromWrite: Set<String> = sp.getStringSet("lockedReaderFromWrite", null)?.toSet() ?: emptySet()
     fun setLockedReader(pkg: String, tree: String, allowed: Boolean, label: String? = null) {
         val e = LockedAccess.entry(pkg, tree)
+        if (e in readerFromWrite) { readerFromWrite = readerFromWrite - e; sp.edit().putStringSet("lockedReaderFromWrite", readerFromWrite).apply() } // the owner's own choice now
         lockedReaders = if (allowed) lockedReaders + e else lockedReaders - e
         lockedReadersAsked = lockedReadersAsked + e
         saveReaders()
@@ -83,9 +88,12 @@ class Prefs(context: Context) {
      */
     var lockedWriters by mutableStateOf(sp.getStringSet("lockedWriteGrants", null)?.toSet() ?: emptySet()); private set
     fun grantBackupWriter(pkg: String, tree: String, label: String) {
-        lockedWriters = lockedWriters + LockedAccess.entry(pkg, tree)
-        sp.edit().putStringSet("lockedWriteGrants", lockedWriters).apply()
-        setLockedReader(pkg, tree, true, label)
+        val e = LockedAccess.entry(pkg, tree)
+        lockedWriters = lockedWriters + e
+        val (r, asked, origin) = LockedAccess.allowWrite(lockedReaders, lockedReadersAsked, readerFromWrite, e)
+        lockedReaders = r; lockedReadersAsked = asked; readerFromWrite = origin
+        sp.edit().putStringSet("lockedWriteGrants", lockedWriters).putString("readerLabel:$pkg", label).putStringSet("lockedReaderFromWrite", origin).apply()
+        saveReaders()
     }
     /** GrantFolderActivity records the folder it granted (so the entry can be rebuilt later); F11 is recorded by its `f11:` key. */
     fun recordGrantedFolder(pkg: String, tree: String) {
@@ -97,22 +105,29 @@ class Prefs(context: Context) {
     var lockedWriteAsked by mutableStateOf(sp.getStringSet("lockedWriteAsked", null)?.toSet() ?: emptySet()); private set
     private fun saveWritePending() { sp.edit().putStringSet("lockedWritePending", lockedWritePending).putStringSet("lockedWriteAsked", lockedWriteAsked).apply() }
     @Synchronized fun noteRefusedWrite(pkgs: Collection<String>, trees: List<String>) {
-        val n = LockedAccess.noteRefusedWrites(lockedWritePending, lockedWriters, lockedWriteAsked, pkgs, trees)
+        val all = sp.all
+        val recorded = LockedAccess.rebuildWriters(
+            all.filter { it.key.startsWith("f11:") && it.value is String }.entries.associate { it.key.removePrefix("f11:").substringAfter(':') to it.value as String },
+            all.filter { it.key.startsWith("gfa:") }.entries.associate { it.key.removePrefix("gfa:") to ((it.value as? Set<*>)?.filterIsInstance<String>()?.toSet() ?: emptySet()) },
+        ) { android.provider.DocumentsContract.buildTreeDocumentUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY, "filen:$it").toString() }
+        val n = LockedAccess.noteRefusedWrites(lockedWritePending, lockedWriters, lockedWriteAsked, pkgs, LockedAccess.askableTrees(recorded, pkgs, trees))
         if (n != lockedWritePending) { lockedWritePending = n; saveWritePending() }
     }
-    /** The owner's answer to "keep adding files": Allow also lets that app read that one folder while locked. */
+    /** The owner's answer to "read, add and remove files": Allow adds reading only if that entry was never answered; "Not now" leaves reading alone. */
     fun answerWrite(pkg: String, tree: String, allowed: Boolean, label: String) {
         val e = LockedAccess.entry(pkg, tree)
         lockedWritePending = lockedWritePending - e; lockedWriteAsked = lockedWriteAsked + e
         saveWritePending()
         if (allowed) grantBackupWriter(pkg, tree, label)
-        else setLockedReader(pkg, tree, false, label)
+        else sp.edit().putString("readerLabel:$pkg", label).apply()
     }
     /** Settings: forget a remembered or answered write request entirely (it may be asked again if refused again). */
     fun removeWriteRequest(entry: String) {
         lockedWritePending = lockedWritePending - entry; lockedWriteAsked = lockedWriteAsked - entry
-        lockedWriters = lockedWriters - entry; lockedReaders = lockedReaders - entry
-        sp.edit().putStringSet("lockedWriteGrants", lockedWriters).putStringSet("lockedGrants", lockedReaders).apply()
+        lockedWriters = lockedWriters - entry
+        val (r, origin) = LockedAccess.removeWrite(lockedReaders, readerFromWrite, entry)
+        lockedReaders = r; readerFromWrite = origin
+        sp.edit().putStringSet("lockedWriteGrants", lockedWriters).putStringSet("lockedGrants", lockedReaders).putStringSet("lockedReaderFromWrite", origin).apply()
         saveWritePending()
     }
     /**
@@ -127,8 +142,8 @@ class Prefs(context: Context) {
     }
     /** Forgets which apps may read/write while locked (account change, sign-out). Settings then lists nothing until they ask again. */
     fun clearLockedAccess() {
-        lockedReaders = emptySet(); lockedWriters = emptySet(); lockedReadersAsked = emptySet(); lockedWritePending = emptySet(); lockedWriteAsked = emptySet()
-        val e = sp.edit().remove("lockedWritePending").remove("lockedWriteAsked").remove("lockedGrants").remove("lockedWriteGrants").remove("lockedGrantsAsked")
+        lockedReaders = emptySet(); lockedWriters = emptySet(); lockedReadersAsked = emptySet(); lockedWritePending = emptySet(); lockedWriteAsked = emptySet(); readerFromWrite = emptySet()
+        val e = sp.edit().remove("lockedReaderFromWrite").remove("lockedWritePending").remove("lockedWriteAsked").remove("lockedGrants").remove("lockedWriteGrants").remove("lockedGrantsAsked")
         sp.all.keys.filter { it.startsWith("readerLabel:") || it.startsWith("f11:") || it.startsWith("gfa:") }.forEach { e.remove(it) }
         e.apply()
     }
