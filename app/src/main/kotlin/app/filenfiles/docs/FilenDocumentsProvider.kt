@@ -243,12 +243,19 @@ class FilenDocumentsProvider : DocumentsProvider() {
      */
     private fun current(documentId: String, signal: CancellationSignal? = null): Pair<FileItem, Boolean>? {
         val id = idOf(documentId)
+        val foreign = id.scheme != "filen" && id.key != "root" && foreignTreeCaller() // read through another app's tree grant
         if (id.key == "root") return io { blocking(signal) { app.router.stat(id) } }?.let { it to false }
         if (id.scheme != "filen") {
             // Received / outgoing share: null only when the server confirms it is gone; offline falls back to the last listing.
             return io {
                 blocking(signal) {
-                    try { app.filen.statShared(id) } catch (e: CancellationException) { throw e
+                    try {
+                        // A tree-grant caller gets a fresh answer: the claimed parent is listed from Filen now when online.
+                        if (foreign) try {
+                            if (app.filen.verifiedParent(id) == FilenStorageProvider.ParentLookup.Gone) return@blocking null
+                        } catch (e: CancellationException) { throw e } catch (e: FileNotFoundException) { throw e } catch (_: Exception) { /* offline: the stored row below */ }
+                        app.filen.statShared(id)
+                    } catch (e: CancellationException) { throw e
                     } catch (e: Exception) {
                         if (e is FileNotFoundException || e.failureKind() == FailureKind.AUTH) throw e
                         app.filen.docState.storedItem(id.value) ?: throw e
@@ -483,10 +490,60 @@ class FilenDocumentsProvider : DocumentsProvider() {
      */
     private fun isDescendant(parentDocumentId: String, documentId: String): Boolean {
         if (parentDocumentId == documentId) return false
+        if (foreignTreeCaller()) return verifiedDescendant(parentDocumentId, documentId)
         var cur = documentId
         repeat(64) {
             val p = parents[cur] ?: pendingParent(cur) ?: (fetchParent(cur) ?: return false)
             if (p == parentDocumentId) return true
+            cur = p
+        }
+        return false
+    }
+
+    /**
+     * True when the current binder call comes from another app (not this one, not the system picker / Files app, which
+     * hold MANAGE_DOCUMENTS) that holds a persisted TREE grant on this provider: its reads must be checked against Filen,
+     * not against the stored parent map (I4 F1). On a non-binder thread this is false (the caller is this process).
+     */
+    private fun foreignTreeCaller(): Boolean {
+        val ctx = context ?: return false
+        val uid = Binder.getCallingUid(); val pid = Binder.getCallingPid()
+        if (uid == Process.myUid()) return false
+        if (ctx.checkPermission(Manifest.permission.MANAGE_DOCUMENTS, pid, uid) == PackageManager.PERMISSION_GRANTED) return false
+        return ctx.contentResolver.outgoingPersistedUriPermissions.any { g ->
+            g.uri.authority == AUTHORITY && DocumentsContract.isTreeUri(g.uri) &&
+                ctx.checkUriPermission(g.uri, pid, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    /**
+     * [isDescendant] for a foreign tree-grant caller: every step up is confirmed by Filen ([verifiedParent]), and a
+     * confirmed answer is remembered in memory for 60 s so walks stay fast. When Filen cannot be asked (offline) a step
+     * is trusted only if the stored link comes from a listing of the parent saved within the last 24 h that contains
+     * the item and the item is not marked gone ([DocsState.freshParent]); otherwise the read is refused (IOException).
+     * A confirmed "gone" is FileNotFoundException.
+     */
+    private fun verifiedDescendant(top: String, documentId: String): Boolean {
+        var cur = documentId
+        repeat(64) {
+            val p = pendingParent(cur) ?: app.filen.verifiedParents.get(cur) ?: run {
+                val id = ItemId(cur)
+                if (id.key == "root" || (id.scheme != "filen" && id.scheme != "filen-in" && id.scheme != "filen-out")) return false
+                awaitSession()
+                try {
+                    when (val r = io { blocking { app.filen.verifiedParent(id) } }) {
+                        is FilenStorageProvider.ParentLookup.Found -> r.parent.value.also { app.filen.verifiedParents.put(cur, it); parents[cur] = it }
+                        FilenStorageProvider.ParentLookup.Top -> return false
+                        FilenStorageProvider.ParentLookup.Gone -> throw FileNotFoundException(cur)
+                    }
+                } catch (e: CancellationException) { throw e
+                } catch (e: FileNotFoundException) { throw e
+                } catch (e: SecurityException) { throw e
+                } catch (e: Exception) {
+                    app.filen.docState.freshParent(cur) ?: throw java.io.IOException("Cannot confirm where this item is right now")
+                }
+            }
+            if (p == top) return true
             cur = p
         }
         return false
