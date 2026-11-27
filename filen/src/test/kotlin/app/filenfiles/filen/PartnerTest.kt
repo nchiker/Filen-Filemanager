@@ -7,7 +7,9 @@ class PartnerTest {
     @Test fun noChoiceOffersIncomingOnly() {
         assertEquals(PartnerState.NONE, Partner.decide(null, listOf(p("a@x.com")), listOf(p("b@x.com")), emptyList()).state)
         val s = Partner.decide(null, emptyList(), emptyList(), listOf(p("c@x.com", "Cy")))
-        assertEquals(PartnerState.INCOMING, s.state); assertEquals("Cy", Partner.displayName(s.who!!))
+        assertEquals(PartnerState.INCOMING, s.state); assertEquals("c", Partner.displayName(s.who!!)) // the stranger's nickname never goes out
+        val evil = Partner.decide(null, emptyList(), emptyList(), listOf(p("sam\u202E@x.com", "Your bank")))
+        assertEquals("sam", Partner.displayName(evil.who!!)); assertNull(evil.who!!.nick)
     }
     @Test fun chosenPartnerStates() {
         assertEquals(PartnerState.CONNECTED, Partner.decide("A@X.com", listOf(p("a@x.com")), emptyList(), emptyList()).state)

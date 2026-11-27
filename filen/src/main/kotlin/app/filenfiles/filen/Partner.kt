@@ -15,7 +15,8 @@ object Partner {
      */
     fun decide(saved: String?, contacts: List<Person>, outgoing: List<Person>, incoming: List<Person>): PartnerStatus {
         fun find(list: List<Person>) = saved?.let { s -> list.firstOrNull { it.email.equals(s, true) } }
-        if (saved == null) return incoming.firstOrNull()?.let { PartnerStatus(PartnerState.INCOMING, it) } ?: PartnerStatus(PartnerState.NONE, null)
+        // No saved partner: the sender is a stranger. Only what their address says (its local part) goes out, never the nickname they chose.
+        if (saved == null) return incoming.firstOrNull()?.let { PartnerStatus(PartnerState.INCOMING, Person(it.email, null)) } ?: PartnerStatus(PartnerState.NONE, null)
         find(contacts)?.let { return PartnerStatus(PartnerState.CONNECTED, it) }
         find(outgoing)?.let { return PartnerStatus(PartnerState.REQUESTED, it) }
         find(incoming)?.let { return PartnerStatus(PartnerState.INCOMING, it) }
