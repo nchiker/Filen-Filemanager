@@ -72,5 +72,5 @@ private val StackShapes = Shapes(extraLarge = RoundedCornerShape(8.dp))
 /** Fixed Stack palette (no wallpaper-derived colours), light or dark following the system. */
 @Composable
 fun FilesTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (dark) Dark else Light, typography = StackType, shapes = StackShapes, content = content)
+    MaterialTheme(colorScheme = if (dark) Dark else Light, typography = StackType, shapes = StackShapes) { TapGuard(); content() } // tapjacking guard on every activity window
 }

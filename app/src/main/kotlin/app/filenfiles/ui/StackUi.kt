@@ -92,6 +92,7 @@ val TightText = androidx.compose.ui.text.TextStyle(
 @Composable
 fun StackDialog(onDismiss: () -> Unit, title: String, buttons: @Composable RowScope.() -> Unit, content: @Composable ColumnScope.() -> Unit) {
     BasicAlertDialog(onDismissRequest = onDismiss) {
+        TapGuard()
         Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 0.dp, shadowElevation = 6.dp) {
             Column(Modifier.padding(top = 20.dp, bottom = 8.dp)) {
                 Text(title, style = TightText.copy(fontSize = 20.sp, lineHeight = 26.sp), color = MaterialTheme.colorScheme.onSurface,

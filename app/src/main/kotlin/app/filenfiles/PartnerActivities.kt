@@ -28,7 +28,9 @@ import app.filenfiles.filen.Person
 import app.filenfiles.filen.StackLink
 import app.filenfiles.filen.failureKind
 import app.filenfiles.filen.friendlyOrNull
+import app.filenfiles.ui.AlertDialog
 import app.filenfiles.ui.FilesTheme
+import app.filenfiles.ui.TapGuard
 import app.filenfiles.ui.LockScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -116,16 +118,6 @@ abstract class PartnerActivity : FragmentActivity() {
 private class PartnerDone(val state: PartnerState, val name: String, val email: String, val label: String)
 
 private fun doneFor(state: PartnerState, p: Person) = PartnerDone(state, Partner.displayName(p), p.email, Partner.label(p))
-
-/**
- * Touches are dropped while another window covers this one (tapjacking). Put once in the content of every dialog and
- * activity: the dialog's own window is a separate window, so it needs its own.
- */
-@Composable
-internal fun TapGuard() {
-    val v = LocalView.current
-    SideEffect { v.filterTouchesWhenObscured = true; v.rootView.filterTouchesWhenObscured = true }
-}
 
 /**
  * One screen: accept the partner's request, or enter their email to send one. Calls [onDone] with the result (the
