@@ -1,5 +1,7 @@
 # Filen Files — handoff / status
 
+**Current version: 0.5.0 (code 17), branch `folder-sharing`, release PENDING** (committed locally; not tagged, pushed or published; owner's go-ahead needed; release order Filen, Stack, Ami Pro). Notes: `docs/RELEASE_NOTES_0.5.0.md` (`tools/release.sh` appends the `versionCode:` line itself). Needs Stack 0.21.0 and Ami Pro 0.7.0 to use sharing. What changed: folder/file sharing with the partner, partner setup with accept, "Shared with me"/"Shared by me" (partner only), shared files open after restart and offline, pinned-app cert checks, access removed on sign-out/account change, tapjacking protection, QR pairing test code removed. Before release: build `:app:assembleRelease` WITHOUT `-PstackTestPackage` and check the test pin is empty (Gradle also refuses a test pin on release tasks).
+
 Native Android file manager (Kotlin, Compose, Material 3) on the **official Filen Rust SDK** (`filen-sdk-rs`,
 `uniffi` feature). README.md has setup/build; this file has what a new session needs to keep going.
 
@@ -48,8 +50,7 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 - **Not device-tested:** the sort menu change; folder public links; password-protected link opened in a browser; a failed updater signature check / dropped download;
   sign-out wipe of pins; the 12 h periodic pin sync; multi-GB pins; unpin while offline.
 - **Possible next items:** updater also comparing versionCode (it only compares the name), built-in video/audio/text viewers, archive browser on `ArchiveReader`,
-  cleanup upgrades, public-link list/QR niceties. **Parked:** Stack-link slice 5 (the `filen` locator, `moved`/`removed`/`unshared` events, lookup by UUID) until
-  the owner says Stack's side is ready. Do not rename `GRANT_BACKUP_FOLDER` or narrow the locked-writer allowance (Stack depends on them).
+  cleanup upgrades, public-link list/QR niceties. Do not rename `GRANT_BACKUP_FOLDER` or narrow the locked-writer allowance (Stack depends on them).
 - **Signing/release rules:** key lives outside the repo (`~/APK-Keys/filen`, see private notes); never push, tag, release or sign without the owner's explicit go-ahead;
   `tools/release.sh --notes "$(cat docs/RELEASE_NOTES_<version>.md)"` publishes.
 
@@ -72,7 +73,7 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 
 ## Resume note (2026-11-22, wound down for a shutdown)
 - **Released:** 0.4.7 only. Everything after it is committed locally on `main` (not pushed, tagged or released): versionCode update check, permission explanations, per-file folder events,
-  sign-in hand-off for GRANT_BACKUP_FOLDER, Create account, cert-pin lists, shorter UI text (docs/UI_TEXT_REVIEW.md), release.sh SHA256SUMS. Next release would be 0.4.8 (code >= 15), built WITHOUT -PstackTestPackage.
+  sign-in hand-off for GRANT_BACKUP_FOLDER, Create account, cert-pin lists, shorter UI text (docs/UI_TEXT_REVIEW.md), release.sh SHA256SUMS.
 - **TEST phone:** has my test-flag release-signed build (events to Stack's checks package). No second profile was created. Nothing of mine is running or left in the owner's Drive.
 - **Nested-trash re-test:** the fix (files listed before the trash, f6ade03) is installed but not re-tested: trash a folder with a file two levels down, with a Stack record seeded (filenSeed/filenShow), expect removed/trashed for it.
 - **Second-profile plan:** docs/SECOND_PROFILE_TEST.md (keep the profile until after the pairing drill). Not started. Needs the phone from Stack/AmiPro (announce first), then: create a test account (owner supplies the address; it is in the gitignored docs/PRIVATE_NOTES.md; the owner clicks the email link), signed-out GRANT_BACKUP_FOLDER started by Stack's checks build.
