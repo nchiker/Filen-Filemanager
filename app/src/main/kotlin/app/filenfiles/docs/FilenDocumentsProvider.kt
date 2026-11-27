@@ -1,5 +1,6 @@
 package app.filenfiles.docs
 
+import app.filenfiles.LockedAccess
 import app.filenfiles.filen.StackLink
 import android.Manifest
 import android.app.PendingIntent
@@ -162,9 +163,9 @@ class FilenDocumentsProvider : DocumentsProvider() {
      *  - the caller is not the system picker / Files app (they hold MANAGE_DOCUMENTS) - browsing stays locked;
      *  - the caller holds a PERSISTED grant (read, or write for [write]) whose tree or document covers [documentId] -
      *    from the owner's own picker choice or GrantFolderActivity;
-     *  - the owner allowed that app ([Prefs.lockedReaders]); for [write] it also got its folder from GrantFolderActivity
-     *    ([Prefs.lockedWriters]).
-     * A reader that passes the first two but isn't allowed yet is remembered, and the owner is asked once after unlocking.
+     *  - the owner allowed that app on THAT grant's tree ([Prefs.lockedReaders], entries (package, tree URI)); for [write] the
+     *    same tree must also be a backup / F11 folder it was given ([Prefs.lockedWriters]). Allowing one tree never opens another.
+     * A reader that passes the first two but isn't allowed yet is remembered, and the owner is asked once per tree after unlocking.
      */
     private fun lockedAccessAllowed(documentId: String, uid: Int, pid: Int, write: Boolean): Boolean {
         val ctx = context!!
@@ -173,17 +174,18 @@ class FilenDocumentsProvider : DocumentsProvider() {
         val pkgs = ctx.packageManager.getPackagesForUid(uid)?.toList().orEmpty()
         if (pkgs.isEmpty()) return false
         val mode = if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else Intent.FLAG_GRANT_READ_URI_PERMISSION
-        val covered = ctx.contentResolver.outgoingPersistedUriPermissions.any { g ->
+        // The trees (persisted grants the caller holds) that cover this document. Access while locked is allowed per (app, tree).
+        val trees = ctx.contentResolver.outgoingPersistedUriPermissions.filter { g ->
             (if (write) g.isWritePermission else g.isReadPermission) && g.uri.authority == AUTHORITY &&
                 ctx.checkUriPermission(g.uri, pid, uid, mode) == PackageManager.PERMISSION_GRANTED &&
                 covers(g.uri, documentId)
-        }
-        if (!covered) return false
+        }.map { it.uri.toString() }
+        if (trees.isEmpty()) return false
         val prefs = app.prefs
-        if (write) return pkgs.any { it in prefs.lockedReaders && it in prefs.lockedWriters }
-        if (pkgs.any { it in prefs.lockedReaders }) return true
-        pkgs.firstOrNull { it !in prefs.lockedReadersAsked }?.let { pkg ->
-            android.os.Handler(Looper.getMainLooper()).post { app.appLock.askReader = pkg }
+        if (write) return trees.any { LockedAccess.allows(prefs.lockedReaders, pkgs, it) && LockedAccess.allows(prefs.lockedWriters, pkgs, it) }
+        if (trees.any { LockedAccess.allows(prefs.lockedReaders, pkgs, it) }) return true
+        LockedAccess.firstUnasked(prefs.lockedReadersAsked, pkgs, trees)?.let { e ->
+            android.os.Handler(Looper.getMainLooper()).post { app.appLock.askReader = e }
         }
         return false
     }

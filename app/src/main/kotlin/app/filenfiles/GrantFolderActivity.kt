@@ -96,7 +96,7 @@ class GrantFolderActivity : FragmentActivity() {
                             onDismissRequest = { if (step == Step.Confirm) cancel("user_cancelled") },
                             icon = icon?.let { { Image(it, null, Modifier.size(48.dp)) } },
                             title = { Text("Let $label back up to Filen?") },
-                            text = { Text("$label can add and remove files in “$folder”, even when Filen Files is locked.") },
+                            text = { Text("$label can add and remove files in “$folder”, even when Filen Files is locked. Nothing else in your Filen.") },
                             confirmButton = {
                                 TextButton(enabled = step == Step.Confirm, onClick = {
                                     step = Step.Working
@@ -122,8 +122,8 @@ class GrantFolderActivity : FragmentActivity() {
                 app.router.list(root).items.firstOrNull { it.isDirectory && it.name == name }?.id
                     ?: app.router.writable(root)!!.createFolder(root, name).also { app.docsChanged(root); app.notifyChanged() }
             }
-            app.prefs.grantBackupWriter(caller, label)
             val uri = DocumentsContract.buildTreeDocumentUri(FilenDocumentsProvider.AUTHORITY, id.value)
+            app.prefs.grantBackupWriter(caller, uri.toString(), label) // only this backup folder, while locked
             setResult(Activity.RESULT_OK, Intent().setData(uri).putExtra(EXTRA_FOLDER_NAME, name).addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION))

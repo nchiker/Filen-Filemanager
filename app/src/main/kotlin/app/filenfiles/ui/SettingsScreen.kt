@@ -1,5 +1,6 @@
 package app.filenfiles.ui
 
+import app.filenfiles.LockedAccess
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -112,11 +113,13 @@ fun SettingsScreen(env: AppEnv) {
                 if (prefs.appLock) {
                     Text("Lock", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
                     lockOptions.forEach { (ms, label) -> DialogChoice(label, prefs.lockTimeoutMs == ms) { prefs.updateLockTimeout(ms) } }
-                    prefs.lockedReadersAsked.sorted().forEach { pkg ->
+                    prefs.lockedReadersAsked.sorted().forEach { entry ->
+                        val pkg = LockedAccess.pkgOf(entry); val tree = LockedAccess.treeOf(entry)
                         val name = prefs.lockedReaderLabel(pkg) ?: appLabel(ctx, pkg)
-                        val writes = pkg in prefs.lockedWriters
-                        DialogSwitch(if (writes) "$name can back up while locked" else "$name can read while locked", pkg in prefs.lockedReaders,
-                            if (writes) "Only its backup folder" else "Only the folder you gave it") { prefs.setLockedReader(pkg, it) }
+                        val writes = entry in prefs.lockedWriters
+                        val scope = LockedAccess.scope(tree)
+                        DialogSwitch(if (writes) "$name can add and remove files in one folder while locked" else "$name can read $scope while locked", entry in prefs.lockedReaders,
+                            if (writes) "Only that folder" else "Only $scope") { prefs.setLockedReader(pkg, tree, it) }
                     }
                 }
                 DialogSwitch("Hide in recent apps", prefs.secureScreen, "Also blocks screenshots") { prefs.updateSecureScreen(it) }

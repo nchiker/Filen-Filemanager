@@ -43,25 +43,31 @@ class Prefs(context: Context) {
     fun updateAppLock(v: Boolean) { appLock = v; sp.edit().putBoolean("appLock", v).apply() }
     fun updateLockTimeout(ms: Long) { lockTimeoutMs = ms; sp.edit().putLong("lockTimeoutMs", ms).apply() }
     fun updateSecureScreen(v: Boolean) { secureScreen = v; sp.edit().putBoolean("secureScreen", v).apply() }
-    /** Packages the owner lets read the folder they gave them while the app is locked (see FilenDocumentsProvider). */
-    var lockedReaders by mutableStateOf(sp.getStringSet("lockedReaders", null)?.toSet() ?: emptySet()); private set
-    /** Packages the owner was already asked about (allowed or "Not now"); listed in Settings, never asked again. */
-    var lockedReadersAsked by mutableStateOf(sp.getStringSet("lockedReadersAsked", null)?.toSet() ?: emptySet()); private set
-    fun setLockedReader(pkg: String, allowed: Boolean, label: String? = null) {
-        lockedReaders = if (allowed) lockedReaders + pkg else lockedReaders - pkg
-        lockedReadersAsked = lockedReadersAsked + pkg
-        sp.edit().putStringSet("lockedReaders", lockedReaders).putStringSet("lockedReadersAsked", lockedReadersAsked)
-            .apply { if (label != null) putString("readerLabel:$pkg", label) }.apply()
+    // One-time migration: the old per-package allowlists are dropped (see LockedAccess.LEGACY_KEYS).
+    init { if (LockedAccess.LEGACY_KEYS.any { sp.contains(it) }) sp.edit().apply { LockedAccess.LEGACY_KEYS.forEach { remove(it) } }.apply() }
+    /** (package, tree URI) entries the owner lets read that one tree while the app is locked (see [LockedAccess] and FilenDocumentsProvider). */
+    var lockedReaders by mutableStateOf(sp.getStringSet("lockedGrants", null)?.toSet() ?: emptySet()); private set
+    /** (package, tree URI) entries the owner was already asked about (allowed or "Not now"); listed in Settings, never asked again. */
+    var lockedReadersAsked by mutableStateOf(sp.getStringSet("lockedGrantsAsked", null)?.toSet() ?: emptySet()); private set
+    private fun saveReaders() { sp.edit().putStringSet("lockedGrants", lockedReaders).putStringSet("lockedGrantsAsked", lockedReadersAsked).apply() }
+    fun setLockedReader(pkg: String, tree: String, allowed: Boolean, label: String? = null) {
+        val e = LockedAccess.entry(pkg, tree)
+        lockedReaders = if (allowed) lockedReaders + e else lockedReaders - e
+        lockedReadersAsked = lockedReadersAsked + e
+        saveReaders()
+        if (label != null) sp.edit().putString("readerLabel:$pkg", label).apply()
     }
+    /** Partner setup: [pkg] may read exactly these [trees] while locked. */
+    fun allowReaderTrees(pkg: String, trees: List<String>, label: String) { trees.forEach { setLockedReader(pkg, it, true, label) } }
     /**
-     * Packages that got a backup folder through GrantFolderActivity: while locked they may also create files in and
-     * delete from that folder (only while they are in [lockedReaders] too - the Settings switch turns both off).
+     * (package, tree URI) entries for a folder an app got through GrantFolderActivity or F11: while locked they may also create
+     * files in and delete from that folder (only while the same entry is in [lockedReaders] too - the Settings switch turns both off).
      */
-    var lockedWriters by mutableStateOf(sp.getStringSet("lockedWriters", null)?.toSet() ?: emptySet()); private set
-    fun grantBackupWriter(pkg: String, label: String) {
-        lockedWriters = lockedWriters + pkg
-        sp.edit().putStringSet("lockedWriters", lockedWriters).apply()
-        setLockedReader(pkg, true, label)
+    var lockedWriters by mutableStateOf(sp.getStringSet("lockedWriteGrants", null)?.toSet() ?: emptySet()); private set
+    fun grantBackupWriter(pkg: String, tree: String, label: String) {
+        lockedWriters = lockedWriters + LockedAccess.entry(pkg, tree)
+        sp.edit().putStringSet("lockedWriteGrants", lockedWriters).apply()
+        setLockedReader(pkg, tree, true, label)
     }
     /**
      * The partner the owner chose in the partner setup (Stack folder sharing). Tied to the account that chose it, so a
@@ -76,7 +82,7 @@ class Prefs(context: Context) {
     /** Forgets which apps may read/write while locked (account change, sign-out). Settings then lists nothing until they ask again. */
     fun clearLockedAccess() {
         lockedReaders = emptySet(); lockedWriters = emptySet(); lockedReadersAsked = emptySet()
-        val e = sp.edit().remove("lockedReaders").remove("lockedWriters").remove("lockedReadersAsked")
+        val e = sp.edit().remove("lockedGrants").remove("lockedWriteGrants").remove("lockedGrantsAsked")
         sp.all.keys.filter { it.startsWith("readerLabel:") || it.startsWith("f11:") }.forEach { e.remove(it) }
         e.apply()
     }

@@ -32,6 +32,7 @@ class AppLock(private val prefs: Prefs) {
      * owner unlocks, the app asks once whether that app may read its folder while locked. Kept in memory only (never
      * taken from an Intent), so another app can't fake the question.
      */
+    /** A LockedAccess entry (package + tree) the owner is to be asked about. */
     var askReader by mutableStateOf<String?>(null)
 
     fun onStop() { leftAt = SystemClock.elapsedRealtime(); inBackground = true }

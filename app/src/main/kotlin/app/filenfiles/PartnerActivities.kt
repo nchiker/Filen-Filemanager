@@ -208,7 +208,7 @@ class PartnerSetupActivity : PartnerActivity() {
                 Column {
                     TapGuard()
                     Text((if (d.state == PartnerState.REQUESTED) "Request sent to ${d.label}. " else "Your partner: ${d.label}. ") +
-                        "$callerLabel can read what you share and what is shared with you, even when Filen Files is locked. It cannot change anything.")
+                        "$callerLabel can read “Shared with me” and “Shared by me”, even when Filen Files is locked. Nothing else in your Filen, and it cannot change anything.")
                 }
             },
             confirmButton = { TextButton(enabled = !granting, onClick = { granting = true; grant(d) }) { Text("Allow") } },
@@ -217,9 +217,10 @@ class PartnerSetupActivity : PartnerActivity() {
     }
 
     private fun grant(d: PartnerDone) {
-        app.prefs.setLockedReader(callerPkg, true, callerLabel)
         fun tree(id: String): Uri = DocumentsContract.buildTreeDocumentUri(FilenDocumentsProvider.AUTHORITY, id)
         val inUri = tree("filen-in:root"); val outUri = tree("filen-out:root")
+        // While locked, this app may read exactly these two trees (not any other grant it holds, e.g. the whole drive).
+        app.prefs.allowReaderTrees(callerPkg, listOf(inUri.toString(), outUri.toString()), callerLabel)
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
         val clip = ClipData.newRawUri("Filen", inUri).apply { addItem(ClipData.Item(outUri)) }
         val result = Intent().setData(inUri).addFlags(flags).putExtra(EXTRA_PARTNER_NAME, d.name).putExtra(EXTRA_STATE, d.state.wire)
@@ -411,7 +412,7 @@ class CreateSharedFolderActivity : PartnerActivity() {
                 Column {
                     TapGuard()
                     Text((if (plan is FolderPlan.Reuse) "It is already shared with ${p.label}. " else "") +
-                        "$callerLabel can add files to it, even when Filen Files is locked. ${p.label} can open them.")
+                        "$callerLabel can read, add and remove files in it, even when Filen Files is locked. Nothing else in your Filen. ${p.label} can open them.")
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
                 }
             },
@@ -454,8 +455,8 @@ class CreateSharedFolderActivity : PartnerActivity() {
                 if (made.created) app.prefs.setF11Folder(callerPkg, app.filen.accountId, id.key) // only this folder is ever reused
                 app.docsChanged(ItemId("filen:root")); app.notifyChanged()
                 runCatching { contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, "filen-out:root"), null) }
-                app.prefs.grantBackupWriter(callerPkg, callerLabel)
                 val uri = DocumentsContract.buildTreeDocumentUri(FilenDocumentsProvider.AUTHORITY, id.value)
+                app.prefs.grantBackupWriter(callerPkg, uri.toString(), callerLabel) // only this folder, while locked
                 val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
                 val result = Intent().setData(uri).addFlags(flags).putExtra(GrantFolderActivity.EXTRA_FOLDER_NAME, name)

@@ -54,19 +54,27 @@ class FilesApp : Application() {
     lateinit var transfers: TransferManager; private set
 
     /**
-     * Sign-out or a different account (docs/STATUS.md): the persisted folder grants Filen handed out (the roots and the
-     * shared scan folders, to the pinned apps) are revoked, and the "allowed while locked" lists are cleared. The apps
-     * ask again after the next partner setup.
+     * Sign-out or a different account (docs/STATUS.md): every persisted folder grant this app handed out on its documents
+     * authority is revoked for ALL holders (pinned apps and any other app the owner gave a folder through the picker), and the
+     * "allowed while locked" lists are cleared. The apps ask again after the next partner setup.
+     *
+     * Uses [android.content.Context.revokeUriPermission] without a package: as the provider's own app this removes the grants
+     * of every other app on that URI and sub-paths, persisted ones included (UriGrantsManagerService.revokeUriPermissionLocked:
+     * with no target package and a caller holding the URI, every UriPermission whose uri is a path-prefix match is revoked
+     * with includingOwners = true). Each tree is a separate prefix, so every listed grant and the three roots are revoked.
      */
     private fun resetAccess() {
+        val auth = app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY
         val uris = HashSet<android.net.Uri>()
-        contentResolver.outgoingPersistedUriPermissions.filter { it.uri.authority == app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY }.forEach { uris.add(it.uri) }
-        listOf("filen:root", "filen-in:root", "filen-out:root").forEach {
-            uris.add(android.provider.DocumentsContract.buildTreeDocumentUri(app.filenfiles.docs.FilenDocumentsProvider.AUTHORITY, it))
-        }
+        contentResolver.outgoingPersistedUriPermissions.filter { it.uri.authority == auth }.forEach { uris.add(it.uri) }
+        listOf("filen:root", "filen-in:root", "filen-out:root").forEach { uris.add(android.provider.DocumentsContract.buildTreeDocumentUri(auth, it)) }
         val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
             android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
-        for (pkg in app.filenfiles.filen.StackLink.pinnedPackages()) for (u in uris) runCatching { revokeUriPermission(pkg, u, flags) }
+        for (u in uris) runCatching { revokeUriPermission(u, flags) }
+        // Whatever is still listed (should be nothing): try the per-package form for the pinned apps.
+        contentResolver.outgoingPersistedUriPermissions.filter { it.uri.authority == auth }.forEach { g ->
+            for (pkg in app.filenfiles.filen.StackLink.pinnedPackages()) runCatching { revokeUriPermission(pkg, g.uri, flags) }
+        }
         prefs.clearLockedAccess()
     }
 
