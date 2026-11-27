@@ -23,7 +23,19 @@ Native Android file manager (Kotlin, Compose, Material 3) on the **official File
 - **"Shared by me"** (`filen-out` for other apps) lists only shares with the saved partner; none without a partner. Filen's own
   screen still lists all outgoing shares.
 - **Test-pin guard:** Gradle fails when `-PstackTestPackage` is set and any release task is requested, unless `-PallowTestPin=true`
-  is also given (developers only, test builds for the TEST phone). A test-pinned app logs one warning (`FilenTestPin`) at start.
+  is also given (developers only, test builds for the TEST phone). `-PstackTestPackage` also REQUIRES `-PstackTestCert=<sha256 hex>`
+  (the test app's signing certificate): the test package is accepted only with exactly that certificate, so a sideloaded app with
+  that package name is refused. `-PstackTestCert` alone fails the build.
+- **How test builds are made (developers only, never published):** get the digest from the checks APK:
+  `apksigner verify --print-certs <checks.apk>` -> "Signer #1 certificate SHA-256 digest". Then
+  `./gradlew :app:assembleRelease -PstackTestPackage=<checks package> -PstackTestCert=<digest> -PallowTestPin=true`.
+  The checks app's debug-certificate digest is the same value Stack pins for its debug-signed builds.
+- **Locked access is per (app, tree URI):** partner setup allows only `filen-in:root` and `filen-out:root`; F11 and the backup flow
+  only their folder; a "Not now" or Allow on one tree never changes another. Old per-package lists are dropped at first start.
+- **Account switch** revokes every outgoing persisted grant on the documents authority for all holders (`revokeUriPermission(uri, flags)`
+  without a package, from the provider app; AOSP UriGrantsManagerService revokes all targets, persisted included). Account is not in the document ids.
+- **Account id** is HMAC-SHA256 (random per-install secret in the encrypted session prefs, kept through sign-out), sent as `EXTRA_ACCOUNT`
+  and `call("account")` to pinned callers only, with the old id as `ACCOUNT_LEGACY` / `legacy_account_id` for a one-time move. A test-pinned app logs one warning (`FilenTestPin`) at start.
 - **Tapjacking:** `filterTouchesWhenObscured` on the partner activities and their dialogs.
 
 ## 2026-11-25: 0.4.9 (code 16) - safe saving and data-loss fixes
