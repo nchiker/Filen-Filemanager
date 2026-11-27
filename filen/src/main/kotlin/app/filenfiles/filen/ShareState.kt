@@ -20,9 +20,28 @@ class OutShareCache(private val ttlMs: Long = 20_000, private val now: () -> Lon
 /** What `share_state` found out. */
 sealed interface ShareAnswer {
     /** [via]: name of the nearest folder above the item that is shared with the partner (only when the item itself is not). */
-    data class Known(val shared: Boolean, val via: String? = null) : ShareAnswer
+    data class Known(val shared: Boolean, val via: String? = null, val viaUuid: String? = null) : ShareAnswer
     /** The item is not in the signed-in user's drive (or is in the trash). */
     data object NotFound : ShareAnswer
+}
+
+/** What the STOP sheet offers for an item. */
+sealed interface StopChoice {
+    /** The item itself is shared: stop it. */
+    data object Direct : StopChoice
+    /** Access is only through the folder [uuid] named [name]: say so and offer to stop that folder. */
+    data class ViaFolder(val uuid: String, val name: String) : StopChoice
+    /** Nothing shares it with the partner. */
+    data object NotShared : StopChoice
+
+    companion object {
+        fun of(a: ShareAnswer): StopChoice = when {
+            a !is ShareAnswer.Known -> Direct // cannot tell: the old behaviour (stop the item itself)
+            a.shared -> Direct
+            a.via != null && a.viaUuid != null -> ViaFolder(a.viaUuid, a.via)
+            else -> NotShared
+        }
+    }
 }
 
 object ShareRules {
@@ -46,12 +65,16 @@ object Ancestors {
      * Walks up from [start] (the item's parent) with [step] (uuid -> name and parent of that folder, null at the top or when
      * unknown) and returns the name of the first folder in [shared]. At most [maxSteps] folders are looked at.
      */
-    inline fun nearestShared(start: String?, shared: Set<String>, maxSteps: Int = 32, step: (String) -> Pair<String, String?>?): String? {
+    inline fun nearestShared(start: String?, shared: Set<String>, maxSteps: Int = 32, step: (String) -> Pair<String, String?>?): String? =
+        nearestSharedHit(start, shared, maxSteps, step)?.second
+
+    /** Like [nearestShared] but returns (uuid, name) of that folder. */
+    inline fun nearestSharedHit(start: String?, shared: Set<String>, maxSteps: Int = 32, step: (String) -> Pair<String, String?>?): Pair<String, String>? {
         var cur = start
         repeat(maxSteps) {
             val c = cur ?: return null
             val (name, parent) = step(c) ?: return null
-            if (c.lowercase() in shared) return name
+            if (c.lowercase() in shared) return c to name
             cur = parent
         }
         return null

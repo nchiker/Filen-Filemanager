@@ -41,4 +41,16 @@ class FolderNamesAndAncestorsTest {
         assertEquals(5, calls)
         assertNull(Ancestors.nearestShared("q", setOf("q")) { null })
     }
+
+    @Test fun stopChoiceFollowsHowAccessComes() {
+        assertEquals(StopChoice.Direct, StopChoice.of(ShareAnswer.Known(true)))
+        assertEquals(StopChoice.ViaFolder("f1", "Taxes"), StopChoice.of(ShareAnswer.Known(false, "Taxes", "f1")))
+        assertEquals(StopChoice.NotShared, StopChoice.of(ShareAnswer.Known(false)))
+        assertEquals(StopChoice.Direct, StopChoice.of(ShareAnswer.NotFound))
+    }
+    @Test fun nearestSharedHitGivesUuidAndName() {
+        val tree = mapOf("c" to ("C" to "b"), "b" to ("B" to "a"), "a" to ("A" to null))
+        assertEquals("b" to "B", Ancestors.nearestSharedHit("c", setOf("b")) { tree[it] })
+        assertNull(Ancestors.nearestSharedHit("c", setOf("z")) { tree[it] })
+    }
 }

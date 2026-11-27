@@ -625,11 +625,11 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         if (ids.isEmpty()) return@io ShareAnswer.Known(false)
         // Not shared itself: is a folder above it? (bounded walk; the folders' names and parents are cached)
         val start = (parent as ParentUuid.Uuid).v1.takeIf { it != rootUuid }
-        val via = Ancestors.nearestShared(start, ids) { u ->
+        val via = Ancestors.nearestSharedHit(start, ids) { u ->
             val e = dirCache[u] ?: run { personalDirItem(client.getDir(u)); dirCache[u]!! }
             e.name to e.parent?.takeIf { it != rootUuid }
         }
-        ShareAnswer.Known(false, via)
+        ShareAnswer.Known(false, via?.second, via?.first?.lowercase())
     }
 
     /** What F11 would do for [name] and [email]; [recorded] is the uuid of the folder F11 made earlier for this caller (see [FolderReuse]). */

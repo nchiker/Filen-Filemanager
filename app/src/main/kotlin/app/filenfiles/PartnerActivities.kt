@@ -26,6 +26,7 @@ import app.filenfiles.filen.Partner
 import app.filenfiles.filen.PartnerState
 import app.filenfiles.filen.Person
 import app.filenfiles.filen.StackLink
+import app.filenfiles.filen.StopChoice
 import app.filenfiles.filen.failureKind
 import app.filenfiles.filen.friendlyOrNull
 import app.filenfiles.ui.AlertDialog
@@ -108,6 +109,8 @@ abstract class PartnerActivity : FragmentActivity() {
         const val EXTRA_SHARED = "app.filenfiles.extra.SHARED"
         const val EXTRA_STOP = "app.filenfiles.extra.STOP"
         const val EXTRA_FILEN_UUID = "app.filenfiles.extra.FILEN_UUID"
+        /** STOP result: the name of the shared folder that was stopped instead, when the item was shared only through it. */
+        const val EXTRA_VIA_FOLDER = "app.filenfiles.extra.VIA_FOLDER"
     }
 }
 
@@ -243,6 +246,8 @@ class SharePartnerActivity : PartnerActivity() {
     private var busy by mutableStateOf(false)
     private var needSetup by mutableStateOf(false)
     private var loaded by mutableStateOf(false)
+    /** STOP only: how the partner has access (see [StopChoice]); Direct until [load] has asked. */
+    private var stopChoice by mutableStateOf<StopChoice>(StopChoice.Direct)
 
     override fun prepare(): Boolean {
         stop = intent.getBooleanExtra(EXTRA_STOP, false)
@@ -283,16 +288,22 @@ class SharePartnerActivity : PartnerActivity() {
             onDismissRequest = { if (!busy) cancel("user_cancelled") },
             title = { Text(if (stop) "Stop sharing with ${p.label}?" else "Share with ${p.label}?") },
             text = {
+                val sc = stopChoice
                 Column {
                     TapGuard()
-                    Text(if (stop) "${p.label} can no longer open “$name”."
+                    Text(if (stop && sc is StopChoice.ViaFolder) "${p.label} can still open “$name” through the shared folder “${sc.name}”. Stop sharing “${sc.name}” instead?"
+                        else if (stop && sc is StopChoice.NotShared) "“$name” is not shared with ${p.label}."
+                        else if (stop) "${p.label} can no longer open “$name”."
                         else if (isDir) "${p.label} can open “$name” and everything in it. You can stop later."
                         else "${p.label} can open “$name”. You can stop later.")
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && p.state == PartnerState.CONNECTED, onClick = { go(p) }) { Text(if (busy) "Please wait…" else if (stop) "Stop sharing" else "Share") }
+                TextButton(enabled = !busy && p.state == PartnerState.CONNECTED, onClick = { go(p) }) {
+                    val sc = stopChoice
+                    Text(if (busy) "Please wait…" else if (stop && sc is StopChoice.ViaFolder) "Stop sharing “${sc.name}”" else if (stop && sc is StopChoice.NotShared) "OK" else if (stop) "Stop sharing" else "Share")
+                }
             },
             dismissButton = { TextButton(enabled = !busy, onClick = { cancel("user_cancelled") }) { Text("Cancel") } },
         )
@@ -313,6 +324,10 @@ class SharePartnerActivity : PartnerActivity() {
                 if (who != null && st.state != PartnerState.NONE) partner = doneFor(
                     if (st.state == PartnerState.CONNECTED) PartnerState.CONNECTED else PartnerState.REQUESTED, who)
                 if (partner?.state == PartnerState.REQUESTED) message = "Waiting for ${partner!!.label} to accept. Try again then."
+                // STOP: does the partner have access to this item itself, or only through a folder above it?
+                if (stop && saved != null && partner?.state == PartnerState.CONNECTED) {
+                    stopChoice = StopChoice.of(withContext(Dispatchers.IO) { app.filen.shareState(item.id.key, saved) })
+                }
             }
             loaded = true
         } catch (e: CancellationException) { throw e } catch (e: Throwable) {
@@ -321,13 +336,20 @@ class SharePartnerActivity : PartnerActivity() {
     }
 
     private fun go(p: PartnerDone) {
+        val sc = stopChoice
+        if (stop && sc is StopChoice.NotShared) { setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_SHARED, false)); finish(); return }
         busy = true; message = null
         lifecycleScope.launch {
             try {
-                val shared = withContext(Dispatchers.IO) { app.filen.sharePartner(target!!, p.email, stop) }
+                val via = if (stop && sc is StopChoice.ViaFolder) sc else null
+                val shared = withContext(Dispatchers.IO) {
+                    if (via != null) app.filen.sharePartner(ItemId("filen:${via.uuid}"), p.email, true) // stops the folder
+                    else app.filen.sharePartner(target!!, p.email, stop)
+                }
                 app.notifyChanged()
                 runCatching { contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(FilenDocumentsProvider.AUTHORITY, "filen-out:root"), null) }
-                setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_SHARED, shared))
+                // SHARED = is the asked item shared with the partner afterwards: no, after stopping the folder it is not.
+                setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_SHARED, shared).apply { if (via != null) putExtra(EXTRA_VIA_FOLDER, via.name) })
                 finish()
             } catch (e: CancellationException) { throw e } catch (e: Throwable) { message = failMessage(e); busy = false }
         }
