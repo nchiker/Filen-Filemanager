@@ -18,6 +18,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import app.filenfiles.core.ItemId
 import app.filenfiles.docs.FilenDocumentsProvider
+import app.filenfiles.filen.LocateRules
 import app.filenfiles.filen.FailureKind
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.FilenStorageProvider
@@ -265,7 +266,7 @@ class SharePartnerActivity : PartnerActivity() {
             if (DocumentsContract.isDocumentUri(this, uri)) DocumentsContract.getDocumentId(uri) else DocumentsContract.getTreeDocumentId(uri)
         }.getOrNull() ?: return null
         val real = if (id.startsWith("filen-pending:")) app.transfers.docIds.get(id) ?: return null else id
-        return real.takeIf { it.startsWith("filen:") }?.removePrefix("filen:")?.lowercase()
+        return LocateRules.target(real)?.takeIf { it.scheme == "filen" }?.key?.lowercase()
     }
 
     @Composable override fun Content() {

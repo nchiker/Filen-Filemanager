@@ -675,10 +675,16 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val dirShared = out.dirs.any { it.inner.uuid == id.key }
         val fileShared = out.files.any { it.uuid == id.key }
         if (stop) {
-            out.dirs.filter { it.inner.uuid == id.key }.forEach { client.removeSharedItem(SharedRootItem.Dir(it)) }
-            out.files.filter { it.uuid == id.key }.forEach { client.removeSharedItem(SharedRootItem.File(it)) }
+            val removedFile = stoppingShare(id.key) { versions ->
+                val now = client.listOutShared(contact) // listed again here: a save may just have shared a new version
+                now.dirs.filter { it.inner.uuid == id.key }.forEach { client.removeSharedItem(SharedRootItem.Dir(it)) }
+                val files = now.files.filter { it.uuid in versions }
+                files.forEach { client.removeSharedItem(SharedRootItem.File(it)) }
+                files.isNotEmpty()
+            }
+            outShareCache.clear()
             outRoots.remove("$OUT:${id.key}")
-            if (fileShared) stackEvent { if (!stillShared(id.key)) StackLink.unshared(context, id.key) }
+            if (removedFile) stackEvent { if (!stillShared(id.key)) StackLink.unshared(context, id.key) }
             return@io false
         }
         if (!dirShared && !fileShared) {
@@ -751,8 +757,20 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
 
     override suspend fun unshare(item: FileItem): Unit = io {
         val roots = outRoots[item.id.value] ?: error("This share is no longer listed; reload and try again")
-        roots.forEach { client.removeSharedItem(it) }
-        outRoots.remove(item.id.value); sharedDirs.remove(item.id.value); sharedFiles.remove(item.id.value)
+        try {
+            stoppingShare(item.id.key) { versions ->
+                roots.forEach { client.removeSharedItem(it) }
+                // A save may have moved a file's share to a new version since the list was made.
+                val people = roots.filterIsInstance<SharedRootItem.File>().map { roleEmail(it.v1.sharingRole).lowercase() }.toSet()
+                if (people.isNotEmpty()) client.listOutShared(null).files
+                    .filter { it.uuid != item.id.key && it.uuid in versions && roleEmail(it.sharingRole).lowercase() in people }
+                    .forEach { client.removeSharedItem(SharedRootItem.File(it)) }
+            }
+        } finally {
+            // Also after a partial failure: some shares may be gone, so the next listing must come from Filen.
+            outRoots.remove(item.id.value); sharedDirs.remove(item.id.value); sharedFiles.remove(item.id.value)
+            outShareCache.clear()
+        }
         if (roots.any { it is SharedRootItem.File }) stackEvent { if (!stillShared(item.id.key)) StackLink.unshared(context, item.id.key) }
     }
 
@@ -1146,8 +1164,18 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
      * replaced content as an earlier version when versioning is on). Only for saving over a file: callers check the
      * file and versioning first ([app.filenfiles.core.SaveOver]). Returns the new version and the version it replaced
      * per the version list (null when that can't be told).
+     *
+     * A file shared on its own is shared by version, so the new version starts out shared with nobody. [replacing] is the
+     * version being saved over: whoever has it is given the new one, right now or not at all (a later retry could undo a
+     * stop made in the meantime; [Saved.shareProblem] tells the owner instead). If Filen can't be reached to ask who has
+     * it, nothing is uploaded and the save waits like any other network failure; any other failure to ask does not block
+     * the save. [lineage] is the file's whole-life id: an upload that landed on another file is not shared with anyone.
      */
-    suspend fun uploadVersion(parent: ItemId, localPath: String, name: String, mime: String?, onProgress: (Long) -> Unit): Pair<FileItem, String?> = io {
+    suspend fun uploadVersion(parent: ItemId, localPath: String, name: String, mime: String?, replacing: String, lineage: String, onProgress: (Long) -> Unit): Saved = io {
+        val stopMark = shareStops.mark()
+        val recipients: Set<String>? = try { directRecipients(replacing) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { if (e.failureKind() == FailureKind.NETWORK) throw e else null }
         var sent = 0L
         val cb = object : JsFileUploadCallback {
             override fun onUpdate(uploadedBytes: ULong) { sent += uploadedBytes.toLong(); onProgress(sent) }
@@ -1157,11 +1185,60 @@ class FilenStorageProvider(private val context: Context, private val session: Fi
         val previous = runCatching {
             client.listFileVersions(f).filter { it.uuid != f.uuid }.maxByOrNull { it.timestamp }?.uuid
         }.getOrNull()
-        item to previous
+        val problem = when {
+            recipients == null -> "Saved, but Filen couldn't check who “$name” is shared with. If it was shared, check that it still is."
+            recipients.isEmpty() || (f.stableUuid != null && f.stableUuid != lineage) -> null
+            withContext(NonCancellable) { shareNewVersion(f, recipients, stopMark, listOf(replacing, lineage, f.uuid)) } -> null
+            else -> "Saved, but “$name” may no longer be shared. Open it and share it again."
+        }
+        Saved(item, previous, problem)
+    }
+
+    class Saved(val item: FileItem, val previous: String?, val shareProblem: String?)
+
+    private val shareStops = ShareStops()
+    /** Held while shares of a saved file are changed, so a stop and the re-share after a save never interleave. */
+    private val shareChange = Mutex()
+
+    /** Who the file version [uuid] is itself shared with (not through a folder). */
+    private suspend fun directRecipients(uuid: String): Set<String> = retryNetwork {
+        client.listOutShared(null).files.filter { it.uuid == uuid }.map { roleEmail(it.sharingRole).lowercase() }.toSet()
+    }
+
+    /** True when every one of [recipients] has [f] now, or the owner stopped sharing it meanwhile. */
+    private suspend fun shareNewVersion(f: FFile, recipients: Set<String>, stopMark: Long, ids: List<String>): Boolean = shareChange.withLock {
+        if (shareStops.stoppedSince(stopMark, ids)) return@withLock true
+        runCatching {
+            retryNetwork {
+                val missing = recipients - directRecipients(f.uuid)
+                val contacts = if (missing.isEmpty()) emptyList() else client.getContacts()
+                var all = true
+                for (email in missing) {
+                    val contact = contacts.firstOrNull { it.email.equals(email, true) }
+                    if (contact == null) all = false else client.shareFile(f, contact)
+                }
+                outShareCache.clear()
+                all
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Runs [remove] to end a share of [uuid], after telling any save in progress not to share that file again. [remove]
+     * gets every version the share may be on by now: [uuid], and the current one if a save replaced it meanwhile.
+     */
+    private suspend fun <T> stoppingShare(uuid: String, remove: suspend (Set<String>) -> T): T {
+        // A failed lookup fails the stop: succeeding without knowing the newest version could leave that one shared.
+        val lineage = retryNetwork { client.getFileOptional(uuid) }?.stableUuid // null for a folder
+        shareStops.stop(listOfNotNull(uuid, lineage))
+        return shareChange.withLock {
+            val head = lineage?.let { id -> retryNetwork { client.getFileByStableUuidOptional(id) }?.uuid }
+            remove(setOfNotNull(uuid, head))
+        }
     }
 
 
-    /** `locate(uri)`: the uuid and path of a Filen document id (`filen:<uuid>` or `filen-in:<uuid>`). */
+    /** `locate(uri)`: the path of an own file, [id] as [LocateRules.target] gives it (null for a received one). */
     suspend fun stackPath(id: ItemId): String? = io {
         if (id.scheme != P) return@io null
         client.getFileOptional(id.key)?.let { personalFileItem(it) }

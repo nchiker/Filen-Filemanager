@@ -376,7 +376,8 @@ class TransferManager(private val app: FilesApp) {
                     val progress: (Long) -> Unit = { sent -> step(id) { it.copy(done = sent) } }
                     when (plan) {
                         is SaveOver.Plan.Replace -> {
-                            val (saved, previous) = filen.uploadVersion(ItemId(plan.parent), file.absolutePath, plan.name, t0.mime, progress)
+                            val result = filen.uploadVersion(ItemId(plan.parent), file.absolutePath, plan.name, t0.mime, headInfo!!.uuid, lineage, progress)
+                            val saved = result.item; val previous = result.previous
                             store.recordOwnSave(lineage, saved.id.key, id, t0.writer)
                             val note = when {
                                 saved.lineage != null && saved.lineage != lineage ->
@@ -385,7 +386,7 @@ class TransferManager(private val app: FilesApp) {
                                     "Saved. Another change to “${plan.name}” was saved at the same moment; both are in its version history."
                                 else -> null
                             }
-                            finishOk(id, saved, note)
+                            finishOk(id, saved, listOfNotNull(note, result.shareProblem).joinToString(" ").ifEmpty { null })
                         }
                         is SaveOver.Plan.Copy -> {
                             val folder = headInfo?.takeIf { !it.trashed }?.parent?.let(::ItemId) ?: t0.parent

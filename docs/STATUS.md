@@ -1,9 +1,42 @@
 # Filen Files — handoff / status
 
-**Current version: 0.5.0 (code 17), branch `folder-sharing`, release PENDING** (committed locally; not tagged, pushed or published; owner's go-ahead needed; release order Filen, Stack, Ami Pro). Notes: `docs/RELEASE_NOTES_0.5.0.md` (`tools/release.sh` appends the `versionCode:` line itself). Needs Stack 0.21.0 and Ami Pro 0.7.0 to use sharing. What changed: folder/file sharing with the partner, partner setup with accept, "Shared with me"/"Shared by me" (partner only), shared files open after restart and offline, pinned-app cert checks, access removed on sign-out/account change, tapjacking protection, QR pairing test code removed. Before release: build `:app:assembleRelease` WITHOUT `-PstackTestPackage` and check the test pin is empty (Gradle also refuses a test pin on release tasks).
+**Current version: 0.5.1 (code 18)**, released 2026-11-28 with Ami Pro 0.7.1. Notes: `docs/RELEASE_NOTES_0.5.1.md` (`tools/release.sh` appends the
+`versionCode:` line itself). See the 2026-11-28 entry below for what is untested. Release builds never use `-PstackTestPackage`.
 
 Native Android file manager (Kotlin, Compose, Material 3) on the **official Filen Rust SDK** (`filen-sdk-rs`,
 `uniffi` feature). README.md has setup/build; this file has what a new session needs to keep going.
+
+## 2026-11-28: 0.5.1 (code 18) - "Save it to Filen first" and shares lost on save (released with Ami Pro 0.7.1)
+- `locate` answered `not_filen` for `filen-out:` ids (own files opened under "Shared by me"). It and the share sheet now read
+  them as `filen:` (`LocateRules`). Other answers: `pending` (upload not finished or never finished), `locked`, `not_signed_in`
+  (also a slow session restore), `unreachable`, `refused`. Only `not_filen` means "not a Filen document".
+- Ami Pro (its own repo, same date) showed its save-to-Filen dialog for every one of those answers; now only for `not_filen`.
+- Unit tests pass; reviewed by Opus in four rounds (results below).
+- Second change: a `filen-out:` file asked for by an app holding a grant on exactly that document URI is answered as the
+  own-drive file (query, read, save-over), so it survives "Stop sharing" and can be saved. Folder grants follow the share
+  as before; delete/rename/move stay refused. This depends on `canonicalize` being overridden to null: AOSP's version turns
+  a tree grant into a plain document grant (found by the second Opus review, before any build left this machine). Never
+  remove that override.
+- Ami Pro: a received (`filen-in:`) file shows a disabled "Shared with you" note; no second tap after Filen recovers.
+- **Device checks, 2026-11-28 (TEST phone, profiles Test A / Test B, synthetic file `cltest.sam`, release-signed unpublished
+  builds, no test pins; the owner approved signing and installing):** new save into Filen offers Share; opened under "Shared by
+  me" offers Stop (the reported case); save through "Shared by me" updates the original, no conflict copy; after the share
+  fix, saves through both routes keep the share and the partner reads the new text; partner's menu shows "Shared with you";
+  after Stop the partner loses it, and the file saved again before a restart reopens from Ami Pro's recents, still unshared.
+  Probe app with a picker folder grant (read+write) on `filen-out:root`: read via tree opens, write via tree refused,
+  `canonicalize` null, plain URI denied for read and write.
+- NOT tested on a device: app lock / pending / signed-out messages, offline, stop during an upload, stop from Filen's "Shared
+  by me" list, saving a file inside a shared folder, restore version, public links. The device checks ran on builds of this code
+  numbered 0.5.0 (17) and 0.7.0 (8), before the version bump.
+- **Found on the TEST phone (also in released 0.5.0, by unchanged code): saving over a file shared on its own ended the share**
+  (partner saw neither version; both through "Filen Drive" and "Shared by me"). Fix: `uploadVersion` notes the direct
+  recipients and shares the new version with them inside the save, never later; `ShareStops` + a mutex make "Stop sharing"
+  win; if it can't be restored the transfer says so. Not covered: restoring an old version, public links (untested), process
+  death between upload and re-share, a stop made on another device while the upload runs.
+- Known: a document already open across the Filen update may save as a conflict copy once (no recorded base; nothing lost).
+  Image thumbnails of a `filen-out:` file still fail after Stop sharing.
+- Upstream: filen-rs 23b6b23 adds `getSharedInItem` (look up a received item by uuid), after the 0.5.36 release commit. The pin
+  stays c93cedd; before using it, build with the newer SDK and check on a live account that the server answers it.
 
 ## 2026-11-26: folder-sharing security review fixes (branch folder-sharing, local only)
 - **Stale parent links:** a fresh listing drops the links of children it no longer has (unless listed elsewhere); items the server

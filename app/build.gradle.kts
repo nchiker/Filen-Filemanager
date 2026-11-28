@@ -30,8 +30,8 @@ android {
         applicationId = "app.filenfiles"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.5.0"
+        versionCode = 18
+        versionName = "0.5.1"
         // TEST ONLY: -PstackTestPackage=<package> makes events go to a Stack checks build (only with its certificate, -PstackTestCert). Empty in shipped builds.
         buildConfigField("String", "STACK_TEST_PACKAGE", "\"${(project.findProperty("stackTestPackage") as String?) ?: ""}\"")
         buildConfigField("String", "STACK_TEST_CERT", "\"${((project.findProperty("stackTestCert") as String?) ?: "").trim().lowercase()}\"")

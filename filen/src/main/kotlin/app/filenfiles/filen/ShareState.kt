@@ -1,5 +1,7 @@
 package app.filenfiles.filen
 
+import app.filenfiles.core.ItemId
+
 /**
  * I4 F10: remembers, for a short time, which items are shared with one contact, so a screen that asks about many files
  * does not list the out-shares every time. Pure; [now] is injected for tests.
@@ -40,6 +42,27 @@ sealed interface StopChoice {
             a.shared -> Direct
             a.via != null && a.viaUuid != null -> ViaFolder(a.viaUuid, a.via)
             else -> NotShared
+        }
+    }
+}
+
+object LocateRules {
+    /** The own-drive id behind a "Shared by me" document id; null for any other id (and for a root). */
+    fun ownBehindShare(docId: String): ItemId? = if (docId.startsWith("filen-out:")) target(docId) else null
+
+    /**
+     * What a document id names for `locate` and the share sheet, or null when it is not a single Filen item. "Shared by me"
+     * (`filen-out:`) is the signed-in user's own drive seen through a share, so it is answered as `filen:`; calling it "not
+     * Filen" made other apps tell the owner to save a file into Filen that was already there. `filen-in:` (someone else's) stays.
+     */
+    fun target(docId: String): ItemId? {
+        val scheme = docId.substringBefore(':', "")
+        val key = docId.substringAfter(':', "")
+        if (key.isEmpty() || key == "root") return null
+        return when (scheme) {
+            "filen", "filen-out" -> ItemId("filen:$key")
+            "filen-in" -> ItemId(docId)
+            else -> null
         }
     }
 }

@@ -1,6 +1,7 @@
 package app.filenfiles.docs
 
 import app.filenfiles.LockedAccess
+import app.filenfiles.filen.LocateRules
 import app.filenfiles.filen.StackLink
 import android.Manifest
 import android.app.PendingIntent
@@ -66,7 +67,8 @@ import kotlin.coroutines.coroutineContext
  * created before Application.onCreate, so [FilesApp] is only touched lazily from the query methods.
  *
  * Writes: new files are created through [createDocument] and uploaded through the transfer queue when the writer closes
- * the file. Existing files are read-only (Filen has no safe overwrite-in-place we can rely on).
+ * the file. Saving over a personal file adds a version (see [openSaveOver]). Under "Shared by me" only the app given that
+ * one file can save it (see [ownThroughDocumentGrant]); folder grants there and "Shared with me" are read-only.
  */
 class FilenDocumentsProvider : DocumentsProvider() {
     /** The app singleton, once Application.onCreate has finished (provider calls can race with process start). */
@@ -284,6 +286,50 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
     }
 
+    /**
+     * Android's own [DocumentsProvider.canonicalize] hands the caller of a tree URI a grant on the plain document URI
+     * ("extends" a folder grant to one file, outliving the folder membership). [holdsDocumentGrant] relies on such a grant
+     * never coming from a folder grant, so it is switched off. Null means "no canonical form". Do not remove.
+     */
+    override fun canonicalize(uri: Uri): Uri? = null
+
+    /**
+     * Whether the caller holds a grant on exactly this plain document URI: from the owner picking that file for the app, or
+     * passed on by an app that was given it. A tree grant does not satisfy this (it covers `content://…/tree/…` URIs), and
+     * cannot be turned into one because [canonicalize] is off. Not for this app or the system picker. Must run on the
+     * binder thread: it reads the caller's identity.
+     */
+    private fun holdsDocumentGrant(documentId: String, write: Boolean): Boolean {
+        val ctx = context ?: return false
+        val uid = Binder.getCallingUid(); val pid = Binder.getCallingPid()
+        if (uid == Process.myUid()) return false
+        if (ctx.checkPermission(Manifest.permission.MANAGE_DOCUMENTS, pid, uid) == PackageManager.PERMISSION_GRANTED) return false
+        val mode = if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else Intent.FLAG_GRANT_READ_URI_PERMISSION
+        return ctx.checkUriPermission(DocumentsContract.buildDocumentUri(AUTHORITY, documentId), pid, uid, mode) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * A file given to an app under "Shared by me" is the owner's own file: for an app holding that one document it is
+     * answered from their own drive, so it can be saved over and stays readable after sharing stops. Folder (tree) grants
+     * keep following the share. Only for reading, saving and [queryDocument]; delete, rename and move stay refused.
+     * null = not such a call, or the own file can't be named (gone, trashed, offline and unknown): the share rules decide.
+     */
+    private fun ownThroughDocumentGrant(documentId: String, write: Boolean, signal: CancellationSignal? = null): FileItem? {
+        val own = LocateRules.ownBehindShare(documentId) ?: return null
+        if (!holdsDocumentGrant(documentId, write)) return null
+        return io {
+            blocking(signal) {
+                try {
+                    app.filen.currentHead(own)?.takeIf { !it.trashed }?.item
+                } catch (e: CancellationException) { throw e
+                } catch (e: Exception) {
+                    if (e.failureKind() != FailureKind.NETWORK) throw e
+                    runCatching { app.router.stat(own) }.getOrNull()
+                }
+            }
+        }?.takeIf { !it.isDirectory }
+    }
+
     private fun <T> io(block: () -> T): T = try { block() } catch (e: Exception) {
         if (e is OperationCanceledException || e is FileNotFoundException || e is AuthenticationRequiredException) throw e
         throw java.io.IOException(e.friendlyOrNull() ?: e.message ?: e.javaClass.simpleName, e)
@@ -343,14 +389,15 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    private fun MatrixCursor.addItem(item: FileItem, documentId: String = item.id.value) {
+    /** [sharedByMeWrite] non-null: an own file answered under its "Shared by me" id (true: the caller may save over it). */
+    private fun MatrixCursor.addItem(item: FileItem, documentId: String = item.id.value, sharedByMeWrite: Boolean? = null) {
         var flags = 0
         val mime = if (item.isDirectory) Document.MIME_TYPE_DIR else item.mime ?: "application/octet-stream"
         if (item.isDirectory && item.origin == Origin.FILEN_PERSONAL) flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
         if (!item.isDirectory && mime.startsWith("image/")) flags = flags or Document.FLAG_SUPPORTS_THUMBNAIL
-        if (app.router.modifier(item) != null) flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or Document.FLAG_SUPPORTS_MOVE
+        if (sharedByMeWrite == null && app.router.modifier(item) != null) flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME or Document.FLAG_SUPPORTS_MOVE
         // Saving over a file (needs versioning on, checked when it is opened for writing).
-        if (!item.isDirectory && item.origin == Origin.FILEN_PERSONAL && item.lineage != null) flags = flags or Document.FLAG_SUPPORTS_WRITE
+        if (!item.isDirectory && item.origin == Origin.FILEN_PERSONAL && item.lineage != null && sharedByMeWrite != false) flags = flags or Document.FLAG_SUPPORTS_WRITE
         val save = item.lineage?.let { app.transfers.pendingSave(it) }
         newRow().apply {
             add(Document.COLUMN_DOCUMENT_ID, documentId)
@@ -390,6 +437,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
         if (documentId == "filen:root" && app.appLock.isLockedForOthers) { c.addRoot(documentId); return c }
         requireSignedIn(doc = documentId)
         if (documentId == "filen:root" || documentId == "filen-in:root" || documentId == "filen-out:root") { c.addRoot(documentId); return c }
+        val own = ownThroughDocumentGrant(documentId, write = false)
+        if (own != null) { c.addItem(own, documentId, sharedByMeWrite = holdsDocumentGrant(documentId, write = true)); return c }
         val item = current(documentId)?.first ?: throw FileNotFoundException(documentId)
         c.addItem(item, documentId) // the id the caller holds, even if the file has a newer version's id now
         return c
@@ -599,7 +648,8 @@ class FilenDocumentsProvider : DocumentsProvider() {
         }
         requireSignedIn(doc = documentId.takeIf { mode == "r" }) // writes never pass while locked
         if (mode != "r") requireFreshChain(documentId)
-        val (item, trashed) = current(documentId, signal) ?: throw FileNotFoundException(documentId)
+        val (item, trashed) = ownThroughDocumentGrant(documentId, write = mode != "r", signal)?.let { it to false }
+            ?: current(documentId, signal) ?: throw FileNotFoundException(documentId)
         if (item.isDirectory) throw FileNotFoundException("$documentId is a folder")
         if (mode != "r") return openSaveOver(documentId, item, trashed, mode, caller, signal)
         // A save another app made that is not uploaded yet is the newest content: readers get it.

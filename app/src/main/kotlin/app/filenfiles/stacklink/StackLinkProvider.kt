@@ -9,9 +9,9 @@ import android.os.Bundle
 import android.provider.DocumentsContract
 import app.filenfiles.LockedAccess
 import app.filenfiles.FilesApp
-import app.filenfiles.core.ItemId
 import app.filenfiles.filen.FilenSession
 import app.filenfiles.filen.FailureKind
+import app.filenfiles.filen.LocateRules
 import app.filenfiles.filen.Partner
 import app.filenfiles.filen.PartnerState
 import app.filenfiles.filen.ShareAnswer
@@ -24,7 +24,7 @@ import org.json.JSONObject
 /**
  * `app.filenfiles.stacklink` (docs/STACK_LINK_CONTRACT.md in the Stack project). Only call(): Stack and Ami Pro may
  * ask, identified by kernel uid -> package -> certificate SHA-256 ([StackLink.callerAllowed]); everyone else is refused.
- *  - `locate(uri)`: the Filen document URI -> {uuid, path}, or {error: "not_filen"}.
+ *  - `locate(uri)`: the Filen document URI (`filen:`, `filen-out:` = own, `filen-in:` = received) -> {uuid, path}, or {error: "not_filen" | "pending"}.
  *  - `lookup(uuid)`: -> {exists, path, trashed, shared}.
  *  - `account()`: -> {account_id, legacy_account_id}, an opaque id of the signed-in account (HMAC with a per-install secret; not the email); legacy_account_id is the id 0.5.0 and earlier gave, so an app can move its saved id once, or {error: "signed_out"}.
  *  - `share_state()` with extra FILEN_UUID: -> {shared} (shared with the saved partner) plus {shared_via} (name of the nearest shared folder above it, when the item itself is not shared), or {error: not_found | signed_out | unknown}.
@@ -67,8 +67,7 @@ class StackLinkProvider : ContentProvider() {
         if (docId.startsWith("filen-pending:")) { // an app that saved through the provider still holds the pending id
             docId = app.transfers.docIds.get(docId) ?: return err("pending") // upload not finished yet: ask again later
         }
-        val id = ItemId(docId)
-        if ((id.scheme != "filen" && id.scheme != "filen-in") || id.key == "root") return err("not_filen")
+        val id = LocateRules.target(docId) ?: return err("not_filen")
         val path = runBlocking(Dispatchers.IO) { runCatching { app.filen.stackPath(id) }.getOrNull() }
         return Bundle().apply { putString("uuid", id.key); putString("path", path ?: "") }
     }
